@@ -2,6 +2,11 @@ CREATE DATABASE IF NOT EXISTS cloudmart;
 
 USE cloudmart;
 
+
+-- ============================================
+-- CUSTOMERS TABLE
+-- ============================================
+
 CREATE TABLE customers (
     customer_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -9,41 +14,50 @@ CREATE TABLE customers (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+
+-- ============================================
+-- PRODUCTS TABLE
+-- ============================================
+
 CREATE TABLE products (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
-    description TEXT,
     price DECIMAL(10,2) NOT NULL,
     category VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE inventory (
-    product_id INT PRIMARY KEY,
     stock_count INT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
 
-    CONSTRAINT fk_inventory_product
-        FOREIGN KEY (product_id)
-        REFERENCES products(product_id)
+    INDEX idx_products_category (category)
 );
+
+
+-- ============================================
+-- ORDERS TABLE
+-- ============================================
 
 CREATE TABLE orders (
     order_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     customer_id INT NOT NULL,
-    status VARCHAR(30) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
     total_amount DECIMAL(10,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_orders_customer
         FOREIGN KEY (customer_id)
         REFERENCES customers(customer_id),
 
     INDEX idx_orders_customer_id (customer_id),
+    INDEX idx_orders_status (status),
     INDEX idx_orders_created_at (created_at)
 );
+
+
+-- ============================================
+-- ORDER ITEMS TABLE
+-- ============================================
 
 CREATE TABLE order_items (
     order_item_id BIGINT AUTO_INCREMENT PRIMARY KEY,
