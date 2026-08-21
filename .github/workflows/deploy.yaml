@@ -20,7 +20,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{secrets.ARN_ROLE}}
+          role-to-assume: ${{secrets.IAM_ARN}}
           aws-region: ap-south-1
  
       - name: Verify AWS Connection
