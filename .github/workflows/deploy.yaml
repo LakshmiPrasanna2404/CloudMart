@@ -1,27 +1,46 @@
-name: CloudMart Deploy
- 
+name: Deploy Infrastructure
+
 on:
   push:
-    branches:
-      - main
- 
+    branches: [main]
+    paths:
+      - 'cloudformation/network-stack.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EXEC_ROLE: ${{ vars.CFN_EXEC_ROLE_ARN }}
+
 jobs:
-  deploy:
+  deploy-network:
+    name: Deploy network-stack
     runs-on: ubuntu-latest
- 
-    permissions:
-      id-token: write
-      contents: read
- 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
- 
-      - name: Configure AWS Credentials
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{secrets.IAM_ARN}}
-          aws-region: ap-south-1
- 
-      - name: Verify AWS Connection
-        run: aws sts get-caller-identity
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy network-stack via Change Set
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/network-stack.yaml \
+            --stack-name cloudmart-network \
+            --parameter-overrides Environment=prod \
+            --role-arn ${{ env.EXEC_ROLE }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Print stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-network \
+            --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' \
+            --output table
