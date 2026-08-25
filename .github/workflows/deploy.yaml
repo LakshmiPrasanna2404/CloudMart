@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'cloudformation/network-stack.yaml'
+      - 'cloudformation/data-stack.yaml'
   workflow_dispatch:
 
 permissions:
@@ -42,5 +43,35 @@ jobs:
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-network \
+            --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' \
+            --output table
+
+  deploy-data:
+    name: Deploy data-stack
+    runs-on: ubuntu-latest
+    needs: deploy-network
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy data-stack via Change Set
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/data-stack.yaml \
+            --stack-name cloudmart-data \
+            --parameter-overrides Environment=prod \
+            --role-arn ${{ env.EXEC_ROLE }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Print stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
             --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' \
             --output table
