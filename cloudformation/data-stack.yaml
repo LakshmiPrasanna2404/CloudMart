@@ -1,1 +1,120 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudMart data-stack — RDS MySQL in the private subnet, and the S3
+  buckets for Lambda deployment artifacts and daily reports.
+  Imports network resources from network-stack.
 
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: Free Tier eligible instance class
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Storage in GB, Free Tier covers up to 20GB
+
+Resources:
+
+  # ---------- RDS Subnet Group ----------
+  # Must span two AZs even though the instance itself runs in one.
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub Private subnets for cloudmart-${Environment} RDS
+      SubnetIds:
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-2-id
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-db-subnet-group
+
+  # ---------- RDS MySQL Instance ----------
+  # MasterUsername/MasterUserPassword are resolved from SSM SecureString
+  # parameters at deploy time — never hardcoded here. These parameters
+  # must already exist before this stack deploys (see bootstrap step).
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub cloudmart-${Environment}-db
+      Engine: mysql
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MasterUsername: !Sub "{{resolve:ssm-secure:/cloudmart/${Environment}/db/username}}"
+      MasterUserPassword: !Sub "{{resolve:ssm-secure:/cloudmart/${Environment}/db/password}}"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-rds-sg-id
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-db
+
+  # ---------- S3 Bucket: Lambda deployment artifacts ----------
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-artifacts-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-artifacts
+
+  # ---------- S3 Bucket: Daily reports ----------
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-reports-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-reports
+
+Outputs:
+  RDSEndpoint:
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub cloudmart-${Environment}-rds-endpoint
+
+  RDSPort:
+    Value: !GetAtt RDSInstance.Endpoint.Port
+    Export:
+      Name: !Sub cloudmart-${Environment}-rds-port
+
+  ArtifactsBucketName:
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub cloudmart-${Environment}-artifacts-bucket-name
+
+  ReportsBucketName:
+    Value: !Ref ReportsBucket
+    Export:
+      Name: !Sub cloudmart-${Environment}-reports-bucket-name
