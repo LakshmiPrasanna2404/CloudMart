@@ -21,13 +21,13 @@ Parameters:
 
   DBMasterUsername:
     Type: String
-    Default: "{{resolve:ssm-secure:/cloudmart/prod/db/username}}"
+    Default: "{{resolve:ssm-secure:/cloudmart/prod/db/username:1}}"
     NoEcho: true
     Description: RDS master username from SSM Parameter Store
 
   DBMasterUserPassword:
     Type: String
-    Default: "{{resolve:ssm-secure:/cloudmart/prod/db/password}}"
+    Default: "{{resolve:ssm-secure:/cloudmart/prod/db/password:1}}"
     NoEcho: true
     Description: RDS master password from SSM Parameter Store
 
