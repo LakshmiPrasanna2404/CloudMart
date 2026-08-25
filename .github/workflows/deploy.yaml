@@ -59,12 +59,25 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Fetch DB credentials from SSM
+        id: dbcreds
+        run: |
+          USERNAME=$(aws ssm get-parameter --name /cloudmart/prod/db/username --with-decryption --query 'Parameter.Value' --output text)
+          PASSWORD=$(aws ssm get-parameter --name /cloudmart/prod/db/password --with-decryption --query 'Parameter.Value' --output text)
+          echo "::add-mask::$USERNAME"
+          echo "::add-mask::$PASSWORD"
+          echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
+          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+
       - name: Deploy data-stack via Change Set
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data-stack.yaml \
             --stack-name cloudmart-data \
-            --parameter-overrides Environment=prod \
+            --parameter-overrides \
+              Environment=prod \
+              DBMasterUsername='${{ steps.dbcreds.outputs.username }}' \
+              DBMasterUserPassword='${{ steps.dbcreds.outputs.password }}' \
             --role-arn ${{ env.EXEC_ROLE }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
