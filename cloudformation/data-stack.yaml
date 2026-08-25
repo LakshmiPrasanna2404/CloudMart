@@ -1,381 +1,131 @@
 AWSTemplateFormatVersion: "2010-09-09"
-
 Description: >
-  CloudMart data-stack — RDS MySQL database, DynamoDB orders table,
-  and S3 buckets for Lambda deployment artifacts and daily reports.
-
-# ============================================================
-# PARAMETERS
-# ============================================================
+  CloudMart data-stack — RDS MySQL in the private subnet, and the S3
+  buckets for Lambda deployment artifacts and daily reports.
+  Imports network resources from network-stack.
 
 Parameters:
-
   Environment:
     Type: String
     Default: prod
-    AllowedValues:
-      - dev
-      - prod
-    Description: Deployment environment
+    AllowedValues: [dev, prod]
 
-  DBName:
+  DBInstanceClass:
     Type: String
-    Default: cloudmart
-    Description: CloudMart MySQL database name
+    Default: db.t3.micro
+    Description: Free Tier eligible instance class
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Storage in GB, Free Tier covers up to 20GB
 
   DBMasterUsername:
     Type: String
     NoEcho: true
-    Description: RDS master username supplied by GitHub Actions from SSM
+    Description: Passed in at deploy time from SSM — never hardcoded
 
   DBMasterUserPassword:
     Type: String
     NoEcho: true
-    Description: RDS master password supplied by GitHub Actions from SSM
-
-
-# ============================================================
-# RESOURCES
-# ============================================================
+    Description: Passed in at deploy time from SSM — never hardcoded
 
 Resources:
 
-  # ==========================================================
-  # RDS SUBNET GROUP
-  # ==========================================================
-
-  RDSSubnetGroup:
+  # ---------- RDS Subnet Group ----------
+  # Must span two AZs even though the instance itself runs in one.
+  DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
-
     Properties:
-      DBSubnetGroupDescription: !Sub
-        CloudMart RDS subnet group for ${Environment}
-
+      DBSubnetGroupDescription: !Sub Private subnets for cloudmart-${Environment} RDS
       SubnetIds:
-        - Fn::ImportValue:
-            !Sub cloudmart-${Environment}-private-subnet-id
-
-        - Fn::ImportValue:
-            !Sub cloudmart-${Environment}-private-subnet-2-id
-
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-2-id
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-${Environment}-rds-subnet-group
+          Value: !Sub cloudmart-${Environment}-db-subnet-group
 
-        - Key: Environment
-          Value: !Ref Environment
-
-
-  # ==========================================================
-  # RDS MYSQL DATABASE
-  # ==========================================================
-
-  CloudMartDatabase:
+  # ---------- RDS MySQL Instance ----------
+  # Username/password are passed in as parameters, fetched from SSM by the
+  # GitHub Actions workflow before deploy — RDS does not support the
+  # {{resolve:ssm-secure:...}} dynamic reference on these two properties,
+  # so the values are resolved one level up, in the pipeline, instead.
+  RDSInstance:
     Type: AWS::RDS::DBInstance
-
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
-
     Properties:
-
-      DBInstanceIdentifier:
-        !Sub cloudmart-${Environment}-mysql
-
+      DBInstanceIdentifier: !Sub cloudmart-${Environment}-db
       Engine: mysql
-
-      EngineVersion: "8.0"
-
-      DBInstanceClass: db.t3.micro
-
-      AllocatedStorage: 20
-
-      MaxAllocatedStorage: 50
-
-      StorageType: gp3
-
-      DBName: !Ref DBName
-
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
       MasterUsername: !Ref DBMasterUsername
-
       MasterUserPassword: !Ref DBMasterUserPassword
-
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-
+      DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
-        - Fn::ImportValue:
-            !Sub cloudmart-${Environment}-rds-sg-id
-
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-rds-sg-id
       PubliclyAccessible: false
-
-      MultiAZ: false
-
-      DeletionProtection: false
-
       StorageEncrypted: true
-
+      MultiAZ: false
       BackupRetentionPeriod: 1
-
-      AutoMinorVersionUpgrade: true
-
+      DeletionProtection: false
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-${Environment}-mysql
+          Value: !Sub cloudmart-${Environment}-db
 
-        - Key: Environment
-          Value: !Ref Environment
-
-        - Key: Project
-          Value: CloudMart
-
-
-  # ==========================================================
-  # DYNAMODB ORDERS TABLE
-  # ==========================================================
-
-  OrdersTable:
-    Type: AWS::DynamoDB::Table
-
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-
-    Properties:
-
-      TableName:
-        !Sub cloudmart-${Environment}-orders
-
-      BillingMode: PAY_PER_REQUEST
-
-      AttributeDefinitions:
-
-        - AttributeName: orderId
-          AttributeType: S
-
-        - AttributeName: customerId
-          AttributeType: S
-
-        - AttributeName: createdAt
-          AttributeType: S
-
-      KeySchema:
-
-        - AttributeName: orderId
-          KeyType: HASH
-
-      GlobalSecondaryIndexes:
-
-        - IndexName: CustomerOrdersIndex
-
-          KeySchema:
-
-            - AttributeName: customerId
-              KeyType: HASH
-
-            - AttributeName: createdAt
-              KeyType: RANGE
-
-          Projection:
-            ProjectionType: ALL
-
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: false
-
-      SSESpecification:
-        SSEEnabled: true
-
-      Tags:
-        - Key: Name
-          Value: !Sub cloudmart-${Environment}-orders
-
-        - Key: Environment
-          Value: !Ref Environment
-
-        - Key: Project
-          Value: CloudMart
-
-
-  # ==========================================================
-  # S3 BUCKET — LAMBDA DEPLOYMENT ARTIFACTS
-  # ==========================================================
-
+  # ---------- S3 Bucket: Lambda deployment artifacts ----------
   ArtifactsBucket:
     Type: AWS::S3::Bucket
-
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-
     Properties:
-
+      BucketName: !Sub cloudmart-artifacts-${AWS::AccountId}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-
       PublicAccessBlockConfiguration:
-
         BlockPublicAcls: true
-
         BlockPublicPolicy: true
-
         IgnorePublicAcls: true
-
         RestrictPublicBuckets: true
-
-      VersioningConfiguration:
-        Status: Enabled
-
       Tags:
-
         - Key: Name
           Value: !Sub cloudmart-${Environment}-artifacts
 
-        - Key: Purpose
-          Value: Lambda deployment packages
-
-        - Key: Environment
-          Value: !Ref Environment
-
-        - Key: Project
-          Value: CloudMart
-
-
-  # ==========================================================
-  # S3 BUCKET — DAILY REPORTS
-  # ==========================================================
-
+  # ---------- S3 Bucket: Daily reports ----------
   ReportsBucket:
     Type: AWS::S3::Bucket
-
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-
     Properties:
-
+      BucketName: !Sub cloudmart-reports-${AWS::AccountId}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-
       PublicAccessBlockConfiguration:
-
         BlockPublicAcls: true
-
         BlockPublicPolicy: true
-
         IgnorePublicAcls: true
-
         RestrictPublicBuckets: true
-
-      VersioningConfiguration:
-        Status: Enabled
-
       Tags:
-
         - Key: Name
           Value: !Sub cloudmart-${Environment}-reports
 
-        - Key: Purpose
-          Value: Daily sales reports
-
-        - Key: Environment
-          Value: !Ref Environment
-
-        - Key: Project
-          Value: CloudMart
-
-
-# ============================================================
-# OUTPUTS
-# ============================================================
-
 Outputs:
-
-  # ----------------------------------------------------------
-  # RDS ENDPOINT
-  # ----------------------------------------------------------
-
   RDSEndpoint:
-    Description: RDS MySQL endpoint address
-
-    Value:
-      !GetAtt CloudMartDatabase.Endpoint.Address
-
+    Value: !GetAtt RDSInstance.Endpoint.Address
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-rds-endpoint
-
-
-  # ----------------------------------------------------------
-  # RDS INSTANCE IDENTIFIER
-  # ----------------------------------------------------------
-
-  RDSInstanceIdentifier:
-    Description: RDS MySQL instance identifier
-
-    Value:
-      !Ref CloudMartDatabase
-
-    Export:
-      Name:
-        !Sub cloudmart-${Environment}-rds-instance-id
-
-
-  # ----------------------------------------------------------
-  # RDS PORT
-  # ----------------------------------------------------------
+      Name: !Sub cloudmart-${Environment}-rds-endpoint
 
   RDSPort:
-    Description: RDS MySQL port
-
-    Value:
-      !GetAtt CloudMartDatabase.Endpoint.Port
-
+    Value: !GetAtt RDSInstance.Endpoint.Port
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-rds-port
-
-
-  # ----------------------------------------------------------
-  # DYNAMODB TABLE
-  # ----------------------------------------------------------
-
-  OrdersTableName:
-    Description: DynamoDB table storing CloudMart orders
-
-    Value:
-      !Ref OrdersTable
-
-    Export:
-      Name:
-        !Sub cloudmart-${Environment}-orders-table
-
-
-  # ----------------------------------------------------------
-  # S3 ARTIFACTS BUCKET
-  # ----------------------------------------------------------
+      Name: !Sub cloudmart-${Environment}-rds-port
 
   ArtifactsBucketName:
-    Description: S3 bucket for Lambda deployment packages
-
-    Value:
-      !Ref ArtifactsBucket
-
+    Value: !Ref ArtifactsBucket
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-artifacts-bucket
-
-
-  # ----------------------------------------------------------
-  # S3 REPORTS BUCKET
-  # ----------------------------------------------------------
+      Name: !Sub cloudmart-${Environment}-artifacts-bucket-name
 
   ReportsBucketName:
-    Description: S3 bucket for daily CSV reports
-
-    Value:
-      !Ref ReportsBucket
-
+    Value: !Ref ReportsBucket
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-reports-bucket
+      Name: !Sub cloudmart-${Environment}-reports-bucket-name
