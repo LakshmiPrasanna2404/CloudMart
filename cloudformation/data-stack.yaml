@@ -20,6 +20,16 @@ Parameters:
     Default: 20
     Description: Storage in GB, Free Tier covers up to 20GB
 
+  DBMasterUsername:
+    Type: String
+    NoEcho: true
+    Description: Passed in at deploy time from SSM — never hardcoded
+
+  DBMasterUserPassword:
+    Type: String
+    NoEcho: true
+    Description: Passed in at deploy time from SSM — never hardcoded
+
 Resources:
 
   # ---------- RDS Subnet Group ----------
@@ -36,9 +46,10 @@ Resources:
           Value: !Sub cloudmart-${Environment}-db-subnet-group
 
   # ---------- RDS MySQL Instance ----------
-  # MasterUsername/MasterUserPassword are resolved from SSM SecureString
-  # parameters at deploy time — never hardcoded here. These parameters
-  # must already exist before this stack deploys (see bootstrap step).
+  # Username/password are passed in as parameters, fetched from SSM by the
+  # GitHub Actions workflow before deploy — RDS does not support the
+  # {{resolve:ssm-secure:...}} dynamic reference on these two properties,
+  # so the values are resolved one level up, in the pipeline, instead.
   RDSInstance:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
@@ -48,8 +59,8 @@ Resources:
       Engine: mysql
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref DBAllocatedStorage
-      MasterUsername: !Sub "{{resolve:ssm-secure:/cloudmart/${Environment}/db/username}}"
-      MasterUserPassword: !Sub "{{resolve:ssm-secure:/cloudmart/${Environment}/db/password}}"
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterUserPassword
       DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
         - Fn::ImportValue: !Sub cloudmart-${Environment}-rds-sg-id
