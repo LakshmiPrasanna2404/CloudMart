@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudMart test-stack — a throwaway Lambda that verifies connectivity
+  from the private subnet to RDS. Used once for the Milestone 2 checkpoint,
+  safe to delete afterward.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+
+Resources:
+  TestRDSConnectionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-test-rds-connection
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-product-role-arn
+      Timeout: 15
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/test-rds-connection.zip
+
+Outputs:
+  TestFunctionName:
+    Value: !Ref TestRDSConnectionFunction
