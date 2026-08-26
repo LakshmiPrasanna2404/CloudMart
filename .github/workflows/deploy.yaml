@@ -119,3 +119,58 @@ jobs:
             --stack-name cloudmart-iam \
             --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' \
             --output table
+
+  deploy-test-lambda:
+    name: Deploy and run RDS connectivity test
+    runs-on: ubuntu-latest
+    needs: deploy-iam
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package Lambda with dependencies
+        run: |
+          cd lambdas/test-rds-connection
+          pip install pymysql -t . --quiet
+          zip -r ../../test-rds-connection.zip . -x "*.pyc"
+          cd ../..
+
+      - name: Upload package to S3
+        run: |
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
+            --output text)
+          aws s3 cp test-rds-connection.zip "s3://${ARTIFACTS_BUCKET}/lambdas/test-rds-connection.zip"
+
+      - name: Deploy test-stack via Change Set
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/test-stack.yaml \
+            --stack-name cloudmart-test \
+            --parameter-overrides Environment=prod \
+            --role-arn ${{ env.EXEC_ROLE }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Invoke the test Lambda
+        run: |
+          aws lambda invoke \
+            --function-name cloudmart-prod-test-rds-connection \
+            --payload '{}' \
+            response.json
+          cat response.json
+
+      - name: Fetch recent CloudWatch logs
+        run: |
+          sleep 5
+          aws logs tail /aws/lambda/cloudmart-prod-test-rds-connection --since 2m
