@@ -64,6 +64,41 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+      # CloudFormation only updates a Lambda's code when the S3Key string
+      # itself changes. Since the key stays the same every deploy, force
+      # the update explicitly here — otherwise a code-only change never
+      # actually reaches the running function.
+      - name: Force Lambda code updates
+        run: |
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
+            --output text)
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-authorizer \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/authorizer.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-authorizer
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-product \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/product.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-product
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-apply-schema \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/apply-schema.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-apply-schema
+
       - name: Print stack outputs
         run: |
           aws cloudformation describe-stacks \
