@@ -1,0 +1,168 @@
+name: Deploy Application
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lambdas/authorizer/**'
+      - 'lambdas/product/**'
+      - 'lambdas/apply-schema/**'
+      - 'cloudformation/app-stack.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EXEC_ROLE: ${{ vars.CFN_EXEC_ROLE_ARN }}
+
+jobs:
+  deploy-app-stack:
+    name: Package, upload, and deploy app-stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package Lambdas with dependencies
+        run: |
+          for name in authorizer product apply-schema; do
+            cd lambdas/$name
+            pip install pymysql -t . --quiet 2>/dev/null || true
+            zip -r "../../${name}.zip" . -x "*.pyc"
+            cd ../..
+          done
+
+      - name: Upload packages to S3
+        run: |
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
+            --output text)
+          aws s3 cp authorizer.zip "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
+          aws s3 cp product.zip "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
+          aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
+
+      - name: Deploy app-stack via Change Set
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/app-stack.yaml \
+            --stack-name cloudmart-app \
+            --parameter-overrides Environment=prod AlertEmail=${{ vars.ALERT_EMAIL }} \
+            --role-arn ${{ env.EXEC_ROLE }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      # CloudFormation only updates a Lambda's code when the S3Key string
+      # itself changes. Since the key stays the same every deploy, force
+      # the update explicitly here — otherwise a code-only change never
+      # actually reaches the running function.
+      - name: Force Lambda code updates
+        run: |
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
+            --output text)
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-authorizer \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/authorizer.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-authorizer
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-product \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/product.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-product
+
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-apply-schema \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/apply-schema.zip \
+            --publish
+
+          aws lambda wait function-updated --function-name cloudmart-prod-apply-schema
+
+      - name: Print stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-app \
+            --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' \
+            --output table
+
+  apply-schema:
+    name: Apply RDS schema and sample data
+    runs-on: ubuntu-latest
+    needs: deploy-app-stack
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Invoke apply-schema Lambda
+        run: |
+          aws lambda invoke \
+            --function-name cloudmart-prod-apply-schema \
+            --payload '{}' \
+            response.json
+          cat response.json
+
+  verify-auth:
+    name: Verify 401 / 401 / 200 auth flow
+    runs-on: ubuntu-latest
+    needs: apply-schema
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Authorizer Function URL
+        id: geturl
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-app \
+            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerFunctionUrl'].OutputValue" \
+            --output text)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: No token -> expect 401
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.geturl.outputs.url }}products")
+          echo "No-token status: $STATUS"
+          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
+
+      - name: Wrong token -> expect 401
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer wrong-token-value" \
+            "${{ steps.geturl.outputs.url }}products")
+          echo "Wrong-token status: $STATUS"
+          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
+
+      - name: Correct token -> expect 200
+        env:
+          REAL_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $REAL_TOKEN" \
+            "${{ steps.geturl.outputs.url }}products")
+          echo "Correct-token status: $STATUS"
+          [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
