@@ -1,0 +1,302 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudMart app-stack — Lambda Authorizer, Product Lambda, Order Lambda,
+  Report Generate Lambda, EventBridge event bus with its schedule and
+  low-stock rules, and the SNS low-stock alerts topic. Matches the
+  CloudMart High-Level Architecture diagram exactly.
+
+# ─────────────────────────────────────────────
+# Parameters
+# ─────────────────────────────────────────────
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+
+  LowStockThreshold:
+    Type: Number
+    Default: 10
+    Description: Stock count below which a low-stock alert fires
+
+  AlertEmail:
+    Type: String
+    Description: Email address to receive low-stock alerts
+
+# ─────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────
+Resources:
+
+  # ---------- EventBridge Event Bus ----------
+  CloudMartEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub cloudmart-${Environment}-bus
+
+  # ---------- SNS Topic: Low stock alerts ----------
+  LowStockAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub cloudmart-${Environment}-low-stock-alerts
+
+  LowStockAlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref LowStockAlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  LowStockTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref LowStockAlertsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref LowStockAlertsTopic
+
+  # ---------- LAMBDA AUTHORIZER ----------
+  # Public entry point via Function URL — checks the token, then invokes
+  # Product Lambda or Order Lambda directly.
+  AuthorizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-authorizer
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !ImportValue
+        Fn::Sub: cloudmart-${Environment}-authorizer-role-arn
+      Timeout: 10
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          AUTH_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/token
+          PRODUCT_LAMBDA_NAME: !Ref ProductFunction
+          ORDER_LAMBDA_NAME: !Ref OrderFunction
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/authorizer.zip
+
+  AuthorizerFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref AuthorizerFunction
+      AuthType: NONE
+
+  AuthorizerFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthorizerFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  # ---------- PRODUCT SERVICE: Product Lambda ----------
+  # Reads/writes RDS MySQL (Products & Inventory).
+  ProductFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-product
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !ImportValue
+        Fn::Sub: cloudmart-${Environment}-product-role-arn
+      Timeout: 15
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_NAME: cloudmart
+          DB_USERNAME_PARAM: !Sub /cloudmart/${Environment}/db/username
+          DB_PASSWORD_PARAM: !Sub /cloudmart/${Environment}/db/password
+          EVENT_BUS_NAME: !Ref CloudMartEventBus
+          LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/product.zip
+
+  # ---------- ORDER SERVICE: Order Lambda ----------
+  # Place or Get Orders — writes RDS MySQL (Update Inventory).
+  OrderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-order
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !ImportValue
+        Fn::Sub: cloudmart-${Environment}-order-role-arn
+      Timeout: 15
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_NAME: cloudmart
+          DB_USERNAME_PARAM: !Sub /cloudmart/${Environment}/db/username
+          DB_PASSWORD_PARAM: !Sub /cloudmart/${Environment}/db/password
+          EVENT_BUS_NAME: !Ref CloudMartEventBus
+          LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/order.zip
+
+  # ---------- REPORTING & OPERATING SERVICE: Report Generate Lambda ----------
+  # Triggered daily by EventBridge Schedule — generates CSV to S3.
+  ReportGenerateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-report-generate
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !ImportValue
+        Fn::Sub: cloudmart-${Environment}-report-role-arn
+      Timeout: 60
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_NAME: cloudmart
+          DB_USERNAME_PARAM: !Sub /cloudmart/${Environment}/db/username
+          DB_PASSWORD_PARAM: !Sub /cloudmart/${Environment}/db/password
+          REPORTS_BUCKET:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-reports-bucket-name
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/report_generate.zip
+
+  # ---------- EVENTBRIDGE SCHEDULE (Daily) → Report Generate Lambda ----------
+  DailyReportScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cloudmart-${Environment}-daily-report-schedule
+      ScheduleExpression: "cron(0 6 * * ? *)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ReportGenerateFunction.Arn
+          Id: ReportGenerateTarget
+
+  ReportSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ReportGenerateFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyReportScheduleRule.Arn
+
+  # ---------- EVENTBRIDGE RULE: low stock → SNS TOPIC ----------
+  LowStockAlertRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cloudmart-${Environment}-low-stock-rule
+      EventBusName: !Ref CloudMartEventBus
+      EventPattern:
+        source: ["cloudmart.inventory"]
+        detail-type: ["InventoryChanged"]
+        detail:
+          stockCount:
+            - numeric: ["<", !Ref LowStockThreshold]
+      State: ENABLED
+      Targets:
+        - Arn: !Ref LowStockAlertsTopic
+          Id: LowStockAlertsTarget
+
+  # ---------- One-time schema apply (Milestone 3) ----------
+  ApplySchemaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-apply-schema
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-product-role-arn
+      Timeout: 30
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/apply-schema.zip
+
+# ─────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────
+Outputs:
+  AuthorizerFunctionUrl:
+    Description: Public HTTPS entry point for the CloudMart API
+    Value: !GetAtt AuthorizerFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub cloudmart-${Environment}-authorizer-url
+
+  EventBusName:
+    Value: !Ref CloudMartEventBus
+    Export:
+      Name: !Sub cloudmart-${Environment}-event-bus-name
+
+  EventBusArn:
+    Value: !GetAtt CloudMartEventBus.Arn
+    Export:
+      Name: !Sub cloudmart-${Environment}-event-bus-arn
+
+  LowStockAlertsTopicArn:
+    Value: !Ref LowStockAlertsTopic
+    Export:
+      Name: !Sub cloudmart-${Environment}-low-stock-topic-arn
+
+  ProductFunctionName:
+    Value: !Ref ProductFunction
+    Export:
+      Name: !Sub cloudmart-${Environment}-product-function-name
+
+  OrderFunctionName:
+    Value: !Ref OrderFunction
+    Export:
+      Name: !Sub cloudmart-${Environment}-order-function-name
+
+  ReportGenerateFunctionName:
+    Value: !Ref ReportGenerateFunction
+    Export:
+      Name: !Sub cloudmart-${Environment}-report-function-name
