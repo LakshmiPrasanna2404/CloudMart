@@ -89,21 +89,32 @@ Resources:
       TargetFunctionArn: !Ref AuthorizerFunction
       AuthType: NONE
 
+  # Two separate permission statements are both required for a public
+  # (AuthType: NONE) Function URL — this matches AWS's own documented
+  # default policy. lambda:InvokeFunctionUrl lets the URL itself be hit;
+  # lambda:InvokeFunction is what actually lets Lambda execute the
+  # function once invoked that way. FunctionUrlAuthType is only a valid
+  # condition on the InvokeFunctionUrl action — the equivalent guard for
+  # the InvokeFunction action is the separate InvokedViaFunctionUrl
+  # property, which restricts this permission to function-URL calls only
+  # (not direct lambda:Invoke from anywhere else).
   AuthorizerFunctionUrlPermission:
     Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
-      
+
   AuthorizerFunctionInvokePermission:
     Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunction
       Principal: "*"
-      FunctionUrlAuthType: NONE
+      InvokedViaFunctionUrl: true
 
   # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
