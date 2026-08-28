@@ -96,6 +96,14 @@ Resources:
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
+      
+  AuthorizerFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthorizerFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      FunctionUrlAuthType: NONE
 
   # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
