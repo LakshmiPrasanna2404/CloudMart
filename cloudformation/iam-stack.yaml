@@ -27,6 +27,12 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      # AWS-managed policy required for Lambda to create/manage the ENIs it
+      # needs to run inside the VPC. EC2 ENI actions do not support
+      # resource-level restriction — this is a documented AWS limitation,
+      # not a scoping oversight.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: AuthorizerPermissions
           PolicyDocument:
@@ -57,25 +63,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-authorizer-role
-
-
-
-  AuthorizerExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub cloudmart-${Environment}-authorizer-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: AuthorizerPermissions
-          ...
 
   # ═══════════════════════════════════════════
   # PRODUCT LAMBDA EXECUTION ROLE
