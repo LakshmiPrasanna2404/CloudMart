@@ -9,7 +9,7 @@ lambda_client = boto3.client("lambda")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
 TOKEN_PARAM = os.environ.get("AUTH_TOKEN_PARAM", f"/cloudmart/{ENVIRONMENT}/auth/token")
 PRODUCT_LAMBDA_NAME = os.environ.get("PRODUCT_LAMBDA_NAME")
-ORDER_LAMBDA_NAME = os.environ.get("ORDER_LAMBDA_NAME")
+ORDER_LAMBDA_NAME = os.environ.get("ORDER_LAMBDA_NAME")  # not yet deployed — routes to Product only until it exists
 
 CACHE_TTL_SECONDS = 300
 
