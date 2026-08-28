@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   CloudMart network-stack — VPC, public and private subnets, internet
   gateway, route tables, all security groups, and VPC Endpoints for
-  SSM, EventBridge, SNS, and S3. No NAT Gateway is used.
+  SSM, EventBridge, SNS, Lambda, and S3. No NAT Gateway is used.
 
 # ─────────────────────────────────────────────
 # Parameters
@@ -103,7 +103,7 @@ Resources:
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
-      
+
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -164,7 +164,7 @@ Resources:
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for SSM, EventBridge, and SNS interface endpoints
+      GroupDescription: Security group for SSM, EventBridge, SNS, and Lambda interface endpoints
       VpcId: !Ref VPC
       Tags:
         - Key: Name
@@ -202,7 +202,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS
+      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda
 
   EndpointIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
@@ -232,7 +232,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS
+      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda
 
   EC2EgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
@@ -289,6 +289,19 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
+
+  # Required so the Authorizer Lambda (running in the private subnet) can
+  # reach the Lambda API to invoke Product/Order Lambda directly — without
+  # this, that invoke() call has no route out and hangs until timeout.
+  LambdaInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.lambda
       VpcEndpointType: Interface
       SubnetIds: [!Ref PrivateSubnet]
       SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
