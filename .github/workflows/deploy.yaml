@@ -19,10 +19,10 @@ env:
 jobs:
 
   # ═══════════════════════════════════════════
-  # 0. LINT — gates app deployment, runs independently of the AWS stacks
+  # 0. LINT — validates CloudFormation templates, gates every stack deploy
   # ═══════════════════════════════════════════
   lint:
-    name: Lint Python code
+    name: Lint CloudFormation templates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +31,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install flake8
-        run: pip install flake8 --quiet
+      - name: Install cfn-lint
+        run: pip install cfn-lint --quiet
 
-      - name: Run flake8
-        run: flake8 lambdas/ --max-line-length=120 --extend-ignore=E501,W503
+      - name: Run cfn-lint on all templates
+        run: cfn-lint cloudformation/*.yaml --ignore-checks W1011
 
   # ═══════════════════════════════════════════
   # 1. NETWORK
@@ -43,6 +43,7 @@ jobs:
   deploy-network:
     name: Deploy network-stack
     runs-on: ubuntu-latest
+    needs: lint
     steps:
       - uses: actions/checkout@v4
 
@@ -133,7 +134,7 @@ jobs:
   deploy-app:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
-    needs: [deploy-iam, lint]
+    needs: deploy-iam
     steps:
       - uses: actions/checkout@v4
 
