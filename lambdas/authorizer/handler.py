@@ -25,8 +25,10 @@ def log(level, message, **extra):
 def get_valid_token():
     now = time.time()
     if _token_cache["value"] is not None and (now - _token_cache["fetched_at"]) < CACHE_TTL_SECONDS:
+        log("INFO", "Using cached token", cache_age_seconds=round(now - _token_cache["fetched_at"], 1))
         return _token_cache["value"]
 
+    log("INFO", "Cache miss or expired, fetching token from SSM")
     response = ssm.get_parameter(Name=TOKEN_PARAM, WithDecryption=True)
     _token_cache["value"] = response["Parameter"]["Value"]
     _token_cache["fetched_at"] = now
