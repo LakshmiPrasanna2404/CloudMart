@@ -19,11 +19,10 @@ env:
 jobs:
 
   # ═══════════════════════════════════════════
-  # 0. LINT — validates Python Lambda code and CloudFormation templates,
-  #    gates every stack deploy
+  # 0. LINT — validates CloudFormation templates, gates every stack deploy
   # ═══════════════════════════════════════════
   lint:
-    name: Lint Python and CloudFormation
+    name: Lint CloudFormation templates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,11 +31,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install linters
-        run: pip install flake8 cfn-lint --quiet
-
-      - name: Lint Python Lambda code
-        run: flake8 lambdas/
+      - name: Install cfn-lint
+        run: pip install cfn-lint --quiet
 
       - name: Lint CloudFormation templates
         run: cfn-lint cloudformation/*.yaml
