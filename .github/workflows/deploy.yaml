@@ -2,11 +2,14 @@ name: Deploy CloudMart
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'cloudformation/**'
       - 'lambdas/**'
       - 'docs/data-model/**'
+      - '.github/workflows/deploy.yaml'
+
   workflow_dispatch:
 
 permissions:
@@ -19,57 +22,114 @@ env:
 
 jobs:
 
-  # ═══════════════════════════════════════════
+  # ============================================================
   # 0. LINT
   # Python + CloudFormation
-  # ═══════════════════════════════════════════
+  # ============================================================
   lint:
     name: Lint Python and CloudFormation
     runs-on: ubuntu-latest
 
     steps:
+
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ────────────────────────────────────────
-      # Python linting
-      # ────────────────────────────────────────
+      # --------------------------------------------------------
+      # Setup Python
+      # --------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
+      # --------------------------------------------------------
+      # Install flake8
+      # --------------------------------------------------------
       - name: Install flake8
-        run: pip install flake8 --quiet
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
 
+      # --------------------------------------------------------
+      # Lint Python
+      # --------------------------------------------------------
       - name: Run flake8
         run: |
           flake8 lambdas/ \
             --max-line-length=120 \
             --extend-ignore=E501,W503
 
-      # ────────────────────────────────────────
-      # CloudFormation linting
-      #
-      # Only actual deployment templates are
-      # checked here.
-      # ────────────────────────────────────────
+      # --------------------------------------------------------
+      # Install cfn-lint
+      # --------------------------------------------------------
       - name: Install cfn-lint
-        run: pip install cfn-lint --quiet
-
-      - name: Lint CloudFormation templates
         run: |
-          cfn-lint --ignore-checks W1011 \
-            cloudformation/network-stack.yaml \
-            cloudformation/data-stack.yaml \
-            cloudformation/iam-stack.yaml \
-            cloudformation/app-stack.yaml
+          pip install cfn-lint
+
+      # --------------------------------------------------------
+      # Lint CloudFormation templates
+      #
+      # Only actual deployment stacks are checked.
+      # test-stack.yaml is intentionally excluded.
+      # --------------------------------------------------------
+      - name: Lint CloudFormation templates
+        shell: bash
+        run: |
+          set -e
+
+          echo "=============================================="
+          echo "CloudFormation Lint"
+          echo "=============================================="
+
+          templates=(
+            "cloudformation/network-stack.yaml"
+            "cloudformation/data-stack.yaml"
+            "cloudformation/iam-stack.yaml"
+            "cloudformation/app-stack.yaml"
+          )
+
+          for template in "${templates[@]}"; do
+
+            echo ""
+            echo "----------------------------------------------"
+            echo "Checking: $template"
+            echo "----------------------------------------------"
+
+            if [ ! -f "$template" ]; then
+              echo "ERROR: File not found: $template"
+              exit 1
+            fi
+
+            echo "File exists."
+
+            cfn-lint \
+              --ignore-checks W1011 \
+              "$template"
+
+            echo "PASS: $template"
+
+          done
+
+          echo ""
+          echo "=============================================="
+          echo "All CloudFormation templates passed linting."
+          echo "=============================================="
 
 
-  # ═══════════════════════════════════════════
-  # 1. NETWORK
-  # VPC, subnets, route tables, IGW, SGs
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 1. NETWORK STACK
+  #
+  # VPC
+  # Public subnets
+  # Private subnets
+  # Internet Gateway
+  # Route tables
+  # Security Groups
+  # ============================================================
   deploy-network:
     name: Deploy network-stack
     runs-on: ubuntu-latest
@@ -77,6 +137,7 @@ jobs:
     needs: lint
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -86,21 +147,23 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy network-stack via Change Set
+      - name: Deploy network-stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
             --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "${{ env.EXEC_ROLE }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
-  # ═══════════════════════════════════════════
-  # 2. DATA
-  # RDS MySQL + S3
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 2. DATA STACK
+  #
+  # RDS MySQL
+  # S3 buckets
+  # ============================================================
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
@@ -108,6 +171,7 @@ jobs:
     needs: deploy-network
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -117,8 +181,12 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # --------------------------------------------------------
+      # Get RDS credentials from SSM
+      # --------------------------------------------------------
       - name: Fetch DB credentials from SSM
         id: dbcreds
+        shell: bash
         run: |
           USERNAME=$(aws ssm get-parameter \
             --name /cloudmart/prod/db/username \
@@ -138,7 +206,10 @@ jobs:
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy data-stack via Change Set
+      # --------------------------------------------------------
+      # Deploy data stack
+      # --------------------------------------------------------
+      - name: Deploy data-stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data-stack.yaml \
@@ -147,15 +218,17 @@ jobs:
               Environment=prod \
               DBMasterUsername='${{ steps.dbcreds.outputs.username }}' \
               DBMasterUserPassword='${{ steps.dbcreds.outputs.password }}' \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "${{ env.EXEC_ROLE }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
-  # ═══════════════════════════════════════════
-  # 3. IAM
-  # Lambda execution roles and policies
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 3. IAM STACK
+  #
+  # Lambda execution roles
+  # Lambda permissions
+  # ============================================================
   deploy-iam:
     name: Deploy iam-stack
     runs-on: ubuntu-latest
@@ -163,6 +236,7 @@ jobs:
     needs: deploy-data
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -172,21 +246,29 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy iam-stack via Change Set
+      - name: Deploy iam-stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
             --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "${{ env.EXEC_ROLE }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
-  # ═══════════════════════════════════════════
-  # 4. APPLICATION
-  # Package and deploy Lambda functions
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 4. APPLICATION STACK
+  #
+  # Lambda functions:
+  #   - Authorizer
+  #   - Product
+  #   - Apply Schema
+  #
+  # No API Gateway.
+  # Authentication uses Lambda Function URL +
+  # Lambda authorizer logic.
+  # ============================================================
   deploy-app:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
@@ -194,6 +276,7 @@ jobs:
     needs: deploy-iam
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -208,33 +291,51 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ────────────────────────────────────────
+      # --------------------------------------------------------
       # Package Lambda functions
-      # ────────────────────────────────────────
-      - name: Package Lambdas with dependencies
+      # --------------------------------------------------------
+      - name: Package Lambdas
+        shell: bash
         run: |
+          set -e
+
           for name in authorizer product apply-schema; do
-            cd lambdas/$name
+
+            echo "Packaging $name..."
+
+            cd "lambdas/$name"
 
             pip install pymysql \
               -t . \
-              --quiet \
-              2>/dev/null || true
+              --quiet
 
-            zip -r "../../${name}.zip" . -x "*.pyc"
+            zip -r "../../${name}.zip" . \
+              -x "*.pyc"
 
             cd ../..
+
+            echo "Created ${name}.zip"
+
           done
 
-      # ────────────────────────────────────────
-      # Upload Lambda packages to S3
-      # ────────────────────────────────────────
-      - name: Upload packages to S3
+      # --------------------------------------------------------
+      # Get artifact bucket and upload Lambda packages
+      # --------------------------------------------------------
+      - name: Upload Lambda packages to S3
+        shell: bash
         run: |
+
           ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-data \
             --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
             --output text)
+
+          if [ -z "$ARTIFACTS_BUCKET" ] || [ "$ARTIFACTS_BUCKET" = "None" ]; then
+            echo "ERROR: Could not find ArtifactsBucketName."
+            exit 1
+          fi
+
+          echo "Artifacts bucket: $ARTIFACTS_BUCKET"
 
           echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
 
@@ -250,26 +351,30 @@ jobs:
             apply-schema.zip \
             "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
-      # ────────────────────────────────────────
+      # --------------------------------------------------------
       # Deploy application stack
-      # ────────────────────────────────────────
-      - name: Deploy app-stack via Change Set
+      # --------------------------------------------------------
+      - name: Deploy app-stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/app-stack.yaml \
             --stack-name cloudmart-app \
             --parameter-overrides \
               Environment=prod \
-              AlertEmail=${{ vars.ALERT_EMAIL }} \
-            --role-arn ${{ env.EXEC_ROLE }} \
+              AlertEmail="${{ vars.ALERT_EMAIL }}" \
+            --role-arn "${{ env.EXEC_ROLE }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      # ────────────────────────────────────────
+      # --------------------------------------------------------
       # Force Lambda code updates
-      # ────────────────────────────────────────
-      - name: Force Lambda code updates
+      # --------------------------------------------------------
+      - name: Update Lambda code
+        shell: bash
         run: |
+
+          echo "Updating authorizer Lambda..."
+
           aws lambda update-function-code \
             --function-name cloudmart-prod-authorizer \
             --s3-bucket "$ARTIFACTS_BUCKET" \
@@ -279,6 +384,9 @@ jobs:
           aws lambda wait function-updated \
             --function-name cloudmart-prod-authorizer
 
+
+          echo "Updating product Lambda..."
+
           aws lambda update-function-code \
             --function-name cloudmart-prod-product \
             --s3-bucket "$ARTIFACTS_BUCKET" \
@@ -287,6 +395,9 @@ jobs:
 
           aws lambda wait function-updated \
             --function-name cloudmart-prod-product
+
+
+          echo "Updating apply-schema Lambda..."
 
           aws lambda update-function-code \
             --function-name cloudmart-prod-apply-schema \
@@ -298,10 +409,11 @@ jobs:
             --function-name cloudmart-prod-apply-schema
 
 
-  # ═══════════════════════════════════════════
+  # ============================================================
   # 5. APPLY RDS SCHEMA
-  # schema.sql + sample data
-  # ═══════════════════════════════════════════
+  #
+  # Executes schema.sql against RDS.
+  # ============================================================
   apply-schema:
     name: Apply RDS schema and sample data
     runs-on: ubuntu-latest
@@ -309,6 +421,7 @@ jobs:
     needs: deploy-app
 
     steps:
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -317,21 +430,23 @@ jobs:
 
       - name: Invoke apply-schema Lambda
         run: |
+
           aws lambda invoke \
             --function-name cloudmart-prod-apply-schema \
             --payload '{}' \
             response.json
 
+          echo "Lambda response:"
           cat response.json
 
 
-  # ═══════════════════════════════════════════
+  # ============================================================
   # 6. VERIFY AUTHENTICATION
   #
-  # No token     -> 401
-  # Wrong token  -> 401
+  # No token      -> 401
+  # Wrong token   -> 401
   # Correct token -> 200
-  # ═══════════════════════════════════════════
+  # ============================================================
   verify-auth:
     name: Verify 401 / 401 / 200 auth flow
     runs-on: ubuntu-latest
@@ -339,27 +454,43 @@ jobs:
     needs: apply-schema
 
     steps:
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # --------------------------------------------------------
+      # Get Lambda Function URL
+      # --------------------------------------------------------
       - name: Get Authorizer Function URL
         id: geturl
+        shell: bash
         run: |
+
           URL=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-app \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerFunctionUrl'].OutputValue" \
             --output text)
 
+          if [ -z "$URL" ] || [ "$URL" = "None" ]; then
+            echo "ERROR: Authorizer Function URL not found."
+            exit 1
+          fi
+
+          echo "Function URL retrieved."
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-      # ────────────────────────────────────────
-      # Test 1 — No token
-      # ────────────────────────────────────────
-      - name: No token -> expect 401
+
+      # --------------------------------------------------------
+      # Test 1
+      # No token -> 401
+      # --------------------------------------------------------
+      - name: No token - expect 401
         run: |
+
           STATUS=$(curl \
             -s \
             -o /dev/null \
@@ -368,15 +499,21 @@ jobs:
 
           echo "No-token status: $STATUS"
 
-          [ "$STATUS" = "401" ] \
-            && echo "PASS" \
-            || (echo "FAIL" && exit 1)
+          if [ "$STATUS" = "401" ]; then
+            echo "PASS: No token correctly rejected."
+          else
+            echo "FAIL: Expected 401 but received $STATUS."
+            exit 1
+          fi
 
-      # ────────────────────────────────────────
-      # Test 2 — Wrong token
-      # ────────────────────────────────────────
-      - name: Wrong token -> expect 401
+
+      # --------------------------------------------------------
+      # Test 2
+      # Wrong token -> 401
+      # --------------------------------------------------------
+      - name: Wrong token - expect 401
         run: |
+
           STATUS=$(curl \
             -s \
             -o /dev/null \
@@ -386,17 +523,24 @@ jobs:
 
           echo "Wrong-token status: $STATUS"
 
-          [ "$STATUS" = "401" ] \
-            && echo "PASS" \
-            || (echo "FAIL" && exit 1)
+          if [ "$STATUS" = "401" ]; then
+            echo "PASS: Wrong token correctly rejected."
+          else
+            echo "FAIL: Expected 401 but received $STATUS."
+            exit 1
+          fi
 
-      # ────────────────────────────────────────
-      # Test 3 — Correct token
-      # ────────────────────────────────────────
-      - name: Correct token -> expect 200
+
+      # --------------------------------------------------------
+      # Test 3
+      # Correct token -> 200
+      # --------------------------------------------------------
+      - name: Correct token - expect 200
         env:
           REAL_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+
         run: |
+
           STATUS=$(curl \
             -s \
             -o /dev/null \
@@ -406,6 +550,9 @@ jobs:
 
           echo "Correct-token status: $STATUS"
 
-          [ "$STATUS" = "200" ] \
-            && echo "PASS" \
-            || (echo "FAIL" && exit 1)
+          if [ "$STATUS" = "200" ]; then
+            echo "PASS: Correct token accepted."
+          else
+            echo "FAIL: Expected 200 but received $STATUS."
+            exit 1
+          fi
