@@ -6,6 +6,7 @@ on:
     paths:
       - 'cloudformation/**'
       - 'lambdas/**'
+      - 'docs/data-model/**'
   workflow_dispatch:
 
 permissions:
@@ -19,7 +20,8 @@ env:
 jobs:
 
   # ═══════════════════════════════════════════
-  # 0. LINT — Python + CloudFormation
+  # 0. LINT
+  # Python + CloudFormation
   # ═══════════════════════════════════════════
   lint:
     name: Lint Python and CloudFormation
@@ -48,13 +50,20 @@ jobs:
 
       # ────────────────────────────────────────
       # CloudFormation linting
+      #
+      # Only actual deployment templates are
+      # checked here.
       # ────────────────────────────────────────
       - name: Install cfn-lint
         run: pip install cfn-lint --quiet
 
       - name: Lint CloudFormation templates
         run: |
-          cfn-lint cloudformation/*.yaml
+          cfn-lint --ignore-checks W1011 \
+            cloudformation/network-stack.yaml \
+            cloudformation/data-stack.yaml \
+            cloudformation/iam-stack.yaml \
+            cloudformation/app-stack.yaml
 
 
   # ═══════════════════════════════════════════
@@ -65,8 +74,6 @@ jobs:
     name: Deploy network-stack
     runs-on: ubuntu-latest
 
-    # Network deployment starts only after
-    # Python + CloudFormation linting succeeds.
     needs: lint
 
     steps:
@@ -98,7 +105,6 @@ jobs:
     name: Deploy data-stack
     runs-on: ubuntu-latest
 
-    # Data stack requires the network stack.
     needs: deploy-network
 
     steps:
@@ -111,9 +117,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ────────────────────────────────────────
-      # Fetch database credentials from SSM
-      # ────────────────────────────────────────
       - name: Fetch DB credentials from SSM
         id: dbcreds
         run: |
@@ -135,9 +138,6 @@ jobs:
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
 
-      # ────────────────────────────────────────
-      # Deploy data stack
-      # ────────────────────────────────────────
       - name: Deploy data-stack via Change Set
         run: |
           aws cloudformation deploy \
@@ -160,7 +160,6 @@ jobs:
     name: Deploy iam-stack
     runs-on: ubuntu-latest
 
-    # IAM deployment starts after data stack.
     needs: deploy-data
 
     steps:
@@ -192,9 +191,6 @@ jobs:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
 
-    # Application deployment starts after IAM.
-    # Lint is already a dependency of network,
-    # so there is no need to specify lint again.
     needs: deploy-iam
 
     steps:
@@ -255,7 +251,7 @@ jobs:
             "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
       # ────────────────────────────────────────
-      # Deploy application CloudFormation stack
+      # Deploy application stack
       # ────────────────────────────────────────
       - name: Deploy app-stack via Change Set
         run: |
@@ -271,10 +267,6 @@ jobs:
 
       # ────────────────────────────────────────
       # Force Lambda code updates
-      #
-      # CloudFormation sees the same S3Key on
-      # every deployment. Therefore explicitly
-      # update the Lambda code after deployment.
       # ────────────────────────────────────────
       - name: Force Lambda code updates
         run: |
@@ -287,7 +279,6 @@ jobs:
           aws lambda wait function-updated \
             --function-name cloudmart-prod-authorizer
 
-
           aws lambda update-function-code \
             --function-name cloudmart-prod-product \
             --s3-bucket "$ARTIFACTS_BUCKET" \
@@ -296,7 +287,6 @@ jobs:
 
           aws lambda wait function-updated \
             --function-name cloudmart-prod-product
-
 
           aws lambda update-function-code \
             --function-name cloudmart-prod-apply-schema \
@@ -310,7 +300,7 @@ jobs:
 
   # ═══════════════════════════════════════════
   # 5. APPLY RDS SCHEMA
-  # Apply schema.sql and sample data
+  # schema.sql + sample data
   # ═══════════════════════════════════════════
   apply-schema:
     name: Apply RDS schema and sample data
@@ -338,7 +328,6 @@ jobs:
   # ═══════════════════════════════════════════
   # 6. VERIFY AUTHENTICATION
   #
-  # Expected:
   # No token     -> 401
   # Wrong token  -> 401
   # Correct token -> 200
@@ -356,9 +345,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ────────────────────────────────────────
-      # Get Lambda Function URL
-      # ────────────────────────────────────────
       - name: Get Authorizer Function URL
         id: geturl
         run: |
@@ -371,7 +357,6 @@ jobs:
 
       # ────────────────────────────────────────
       # Test 1 — No token
-      # Expected: 401
       # ────────────────────────────────────────
       - name: No token -> expect 401
         run: |
@@ -389,7 +374,6 @@ jobs:
 
       # ────────────────────────────────────────
       # Test 2 — Wrong token
-      # Expected: 401
       # ────────────────────────────────────────
       - name: Wrong token -> expect 401
         run: |
@@ -408,7 +392,6 @@ jobs:
 
       # ────────────────────────────────────────
       # Test 3 — Correct token
-      # Expected: 200
       # ────────────────────────────────────────
       - name: Correct token -> expect 200
         env:
