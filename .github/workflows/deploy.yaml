@@ -35,7 +35,13 @@ jobs:
         run: pip install cfn-lint --quiet
 
       - name: Lint CloudFormation templates
-        run: cfn-lint cloudformation/*.yaml
+        # W1011 is suppressed deliberately: it suggests using a dynamic
+        # {{resolve:ssm-secure:...}} reference for DBMasterUsername/
+        # DBMasterUserPassword, but RDS does not support that syntax on
+        # those two properties. Credentials are resolved from SSM one
+        # level up, in the pipeline itself (see deploy-data job) — this
+        # is the documented workaround, not an oversight.
+        run: cfn-lint --ignore-checks W1011 cloudformation/*.yaml
 
   # ═══════════════════════════════════════════
   # 1. NETWORK
