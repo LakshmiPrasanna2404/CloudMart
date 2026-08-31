@@ -19,42 +19,59 @@ env:
 jobs:
 
   # ═══════════════════════════════════════════
-  # 0. LINT — gates app deployment, runs independently of the AWS stacks
+  # 0. LINT — Python + CloudFormation
   # ═══════════════════════════════════════════
   lint:
-    name: Lint Python code and CloudFormation templates
+    name: Lint Python and CloudFormation
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ────────────────────────────────────────
+      # Python linting
+      # ────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install linters
-        run: pip install flake8 cfn-lint --quiet
+      - name: Install flake8
+        run: pip install flake8 --quiet
 
       - name: Run flake8
-        run: flake8 lambdas/ --max-line-length=120 --extend-ignore=E501,W503
+        run: |
+          flake8 lambdas/ \
+            --max-line-length=120 \
+            --extend-ignore=E501,W503
+
+      # ────────────────────────────────────────
+      # CloudFormation linting
+      # ────────────────────────────────────────
+      - name: Install cfn-lint
+        run: pip install cfn-lint --quiet
 
       - name: Lint CloudFormation templates
-        # W1011 is suppressed deliberately: it suggests using a dynamic
-        # {{resolve:ssm-secure:...}} reference for DBMasterUsername/
-        # DBMasterUserPassword, but RDS does not support that syntax on
-        # those two properties. Credentials are resolved from SSM one
-        # level up, in the pipeline itself (see deploy-data job) — this
-        # is the documented workaround, not an oversight.
-        run: cfn-lint --ignore-checks W1011 cloudformation/*.yaml
+        run: |
+          cfn-lint cloudformation/*.yaml
+
 
   # ═══════════════════════════════════════════
   # 1. NETWORK
+  # VPC, subnets, route tables, IGW, SGs
   # ═══════════════════════════════════════════
   deploy-network:
     name: Deploy network-stack
     runs-on: ubuntu-latest
+
+    # Network deployment starts only after
+    # Python + CloudFormation linting succeeds.
     needs: lint
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -72,15 +89,21 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+
   # ═══════════════════════════════════════════
   # 2. DATA
+  # RDS MySQL + S3
   # ═══════════════════════════════════════════
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
+
+    # Data stack requires the network stack.
     needs: deploy-network
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -88,16 +111,33 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ────────────────────────────────────────
+      # Fetch database credentials from SSM
+      # ────────────────────────────────────────
       - name: Fetch DB credentials from SSM
         id: dbcreds
         run: |
-          USERNAME=$(aws ssm get-parameter --name /cloudmart/prod/db/username --with-decryption --query 'Parameter.Value' --output text)
-          PASSWORD=$(aws ssm get-parameter --name /cloudmart/prod/db/password --with-decryption --query 'Parameter.Value' --output text)
+          USERNAME=$(aws ssm get-parameter \
+            --name /cloudmart/prod/db/username \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
+          PASSWORD=$(aws ssm get-parameter \
+            --name /cloudmart/prod/db/password \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
           echo "::add-mask::$USERNAME"
           echo "::add-mask::$PASSWORD"
+
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
 
+      # ────────────────────────────────────────
+      # Deploy data stack
+      # ────────────────────────────────────────
       - name: Deploy data-stack via Change Set
         run: |
           aws cloudformation deploy \
@@ -111,15 +151,21 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+
   # ═══════════════════════════════════════════
   # 3. IAM
+  # Lambda execution roles and policies
   # ═══════════════════════════════════════════
   deploy-iam:
     name: Deploy iam-stack
     runs-on: ubuntu-latest
+
+    # IAM deployment starts after data stack.
     needs: deploy-data
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -137,17 +183,26 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+
   # ═══════════════════════════════════════════
-  # 4. APPLICATION — package, upload, deploy, force code update
+  # 4. APPLICATION
+  # Package and deploy Lambda functions
   # ═══════════════════════════════════════════
   deploy-app:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
-    needs: deploy-iam
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    # Application deployment starts after IAM.
+    # Lint is already a dependency of network,
+    # so there is no need to specify lint again.
+    needs: deploy-iam
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -157,65 +212,115 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ────────────────────────────────────────
+      # Package Lambda functions
+      # ────────────────────────────────────────
       - name: Package Lambdas with dependencies
         run: |
           for name in authorizer product apply-schema; do
             cd lambdas/$name
-            pip install pymysql -t . --quiet 2>/dev/null || true
+
+            pip install pymysql \
+              -t . \
+              --quiet \
+              2>/dev/null || true
+
             zip -r "../../${name}.zip" . -x "*.pyc"
+
             cd ../..
           done
 
+      # ────────────────────────────────────────
+      # Upload Lambda packages to S3
+      # ────────────────────────────────────────
       - name: Upload packages to S3
         run: |
           ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-data \
             --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
             --output text)
-          echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
-          aws s3 cp authorizer.zip "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
-          aws s3 cp product.zip "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
-          aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
+          echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
+
+          aws s3 cp \
+            authorizer.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
+
+          aws s3 cp \
+            product.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
+
+          aws s3 cp \
+            apply-schema.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
+
+      # ────────────────────────────────────────
+      # Deploy application CloudFormation stack
+      # ────────────────────────────────────────
       - name: Deploy app-stack via Change Set
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/app-stack.yaml \
             --stack-name cloudmart-app \
-            --parameter-overrides Environment=prod AlertEmail=${{ vars.ALERT_EMAIL }} \
+            --parameter-overrides \
+              Environment=prod \
+              AlertEmail=${{ vars.ALERT_EMAIL }} \
             --role-arn ${{ env.EXEC_ROLE }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      # CloudFormation only updates a Lambda's code when the S3Key string
-      # itself changes. Since it stays the same every deploy, force the
-      # update explicitly here so code changes always actually take effect.
+      # ────────────────────────────────────────
+      # Force Lambda code updates
+      #
+      # CloudFormation sees the same S3Key on
+      # every deployment. Therefore explicitly
+      # update the Lambda code after deployment.
+      # ────────────────────────────────────────
       - name: Force Lambda code updates
         run: |
           aws lambda update-function-code \
             --function-name cloudmart-prod-authorizer \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/authorizer.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-authorizer
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/authorizer.zip \
+            --publish
+
+          aws lambda wait function-updated \
+            --function-name cloudmart-prod-authorizer
+
 
           aws lambda update-function-code \
             --function-name cloudmart-prod-product \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/product.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-product
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/product.zip \
+            --publish
+
+          aws lambda wait function-updated \
+            --function-name cloudmart-prod-product
+
 
           aws lambda update-function-code \
             --function-name cloudmart-prod-apply-schema \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/apply-schema.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-apply-schema
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --s3-key lambdas/apply-schema.zip \
+            --publish
+
+          aws lambda wait function-updated \
+            --function-name cloudmart-prod-apply-schema
+
 
   # ═══════════════════════════════════════════
-  # 5. APPLY SCHEMA
+  # 5. APPLY RDS SCHEMA
+  # Apply schema.sql and sample data
   # ═══════════════════════════════════════════
   apply-schema:
     name: Apply RDS schema and sample data
     runs-on: ubuntu-latest
+
     needs: deploy-app
+
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -226,21 +331,34 @@ jobs:
             --function-name cloudmart-prod-apply-schema \
             --payload '{}' \
             response.json
+
           cat response.json
 
+
   # ═══════════════════════════════════════════
-  # 6. VERIFY AUTH — 401 / 401 / 200
+  # 6. VERIFY AUTHENTICATION
+  #
+  # Expected:
+  # No token     -> 401
+  # Wrong token  -> 401
+  # Correct token -> 200
   # ═══════════════════════════════════════════
   verify-auth:
     name: Verify 401 / 401 / 200 auth flow
     runs-on: ubuntu-latest
+
     needs: apply-schema
+
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ────────────────────────────────────────
+      # Get Lambda Function URL
+      # ────────────────────────────────────────
       - name: Get Authorizer Function URL
         id: geturl
         run: |
@@ -248,28 +366,63 @@ jobs:
             --stack-name cloudmart-app \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerFunctionUrl'].OutputValue" \
             --output text)
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+      # ────────────────────────────────────────
+      # Test 1 — No token
+      # Expected: 401
+      # ────────────────────────────────────────
       - name: No token -> expect 401
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.geturl.outputs.url }}products")
-          echo "No-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
+          STATUS=$(curl \
+            -s \
+            -o /dev/null \
+            -w "%{http_code}" \
+            "${{ steps.geturl.outputs.url }}products")
 
+          echo "No-token status: $STATUS"
+
+          [ "$STATUS" = "401" ] \
+            && echo "PASS" \
+            || (echo "FAIL" && exit 1)
+
+      # ────────────────────────────────────────
+      # Test 2 — Wrong token
+      # Expected: 401
+      # ────────────────────────────────────────
       - name: Wrong token -> expect 401
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl \
+            -s \
+            -o /dev/null \
+            -w "%{http_code}" \
             -H "Authorization: Bearer wrong-token-value" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Wrong-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
+          echo "Wrong-token status: $STATUS"
+
+          [ "$STATUS" = "401" ] \
+            && echo "PASS" \
+            || (echo "FAIL" && exit 1)
+
+      # ────────────────────────────────────────
+      # Test 3 — Correct token
+      # Expected: 200
+      # ────────────────────────────────────────
       - name: Correct token -> expect 200
         env:
           REAL_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl \
+            -s \
+            -o /dev/null \
+            -w "%{http_code}" \
             -H "Authorization: Bearer $REAL_TOKEN" \
             "${{ steps.geturl.outputs.url }}products")
+
           echo "Correct-token status: $STATUS"
-          [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
+
+          [ "$STATUS" = "200" ] \
+            && echo "PASS" \
+            || (echo "FAIL" && exit 1)
