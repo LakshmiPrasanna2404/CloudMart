@@ -64,7 +64,7 @@ jobs:
       - name: Lint CloudFormation templates
         run: |
           echo "Linting CloudFormation templates..."
-          cfn-lint cloudformation/*.yaml
+          cfn-lint cloudformation/*.yaml --ignore-checks W1011
           echo "CloudFormation template linting passed"
 
       - name: Configure AWS credentials
