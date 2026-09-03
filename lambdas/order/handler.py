@@ -12,8 +12,6 @@ ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
 EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME")
 LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))
 
-_db_conn = None
-
 
 def log(level, message, **extra):
     print(json.dumps({"level": level, "message": message, **extra}))
@@ -24,20 +22,21 @@ def get_param(name, decrypt=False):
 
 
 def get_connection():
-    global _db_conn
-    if _db_conn and _db_conn.open:
-        return _db_conn
-
+    """A fresh connection per invocation — never cached globally.
+    Caching a connection across invocations is risky for transactional
+    code like this: if an invocation is ever killed mid-transaction
+    (timeout, crash), a cached connection would silently carry a stuck,
+    uncommitted transaction — and its row lock — into the next call."""
     host = os.environ.get("DB_HOST")
     username = get_param(f"/cloudmart/{ENVIRONMENT}/db/username", decrypt=True)
     password = get_param(f"/cloudmart/{ENVIRONMENT}/db/password", decrypt=True)
     dbname = os.environ.get("DB_NAME", "cloudmart")
 
-    _db_conn = pymysql.connect(
+    return pymysql.connect(
         host=host, user=username, password=password, db=dbname,
-        cursorclass=pymysql.cursors.DictCursor, autocommit=False, connect_timeout=5
+        cursorclass=pymysql.cursors.DictCursor, autocommit=False,
+        connect_timeout=5, read_timeout=8, write_timeout=8
     )
-    return _db_conn
 
 
 def response(status_code, body):
@@ -111,8 +110,7 @@ def place_order(body):
 
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            # Lock and check stock for every item before writing anything
+        with conn.cursor() as cur:            # Lock and check stock for every item before writing anything
             order_items_data = []
             total_amount = 0
             for item in items:
@@ -196,31 +194,39 @@ def place_order(body):
         log("ERROR", "Unhandled exception during order placement", error=str(e))
         publish_metric("OrdersFailed", {"Environment": ENVIRONMENT, "FailureReason": "INTERNAL_ERROR"})
         return response(500, {"error": "internal_error", "message": "Unexpected error"})
+    finally:
+        conn.close()
 
 
 def get_order(order_id):
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,))
-        order = cur.fetchone()
-        if not order:
-            return response(404, {"error": "not_found", "message": "Order not found"})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,))
+            order = cur.fetchone()
+            if not order:
+                return response(404, {"error": "not_found", "message": "Order not found"})
 
-        cur.execute("SELECT * FROM order_items WHERE order_id = %s", (order_id,))
-        order["items"] = cur.fetchall()
+            cur.execute("SELECT * FROM order_items WHERE order_id = %s", (order_id,))
+            order["items"] = cur.fetchall()
 
-        cur.execute("SELECT * FROM order_history WHERE order_id = %s ORDER BY changed_at", (order_id,))
-        order["history"] = cur.fetchall()
+            cur.execute("SELECT * FROM order_history WHERE order_id = %s ORDER BY changed_at", (order_id,))
+            order["history"] = cur.fetchall()
 
-    return response(200, order)
+        return response(200, order)
+    finally:
+        conn.close()
 
 
 def list_orders_by_customer(customer_id):
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM orders WHERE customer_id = %s ORDER BY created_at DESC", (customer_id,))
-        orders = cur.fetchall()
-    return response(200, {"orders": orders})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders WHERE customer_id = %s ORDER BY created_at DESC", (customer_id,))
+            orders = cur.fetchall()
+        return response(200, {"orders": orders})
+    finally:
+        conn.close()
 
 
 def lambda_handler(event, context):
