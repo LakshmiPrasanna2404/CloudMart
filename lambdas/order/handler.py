@@ -21,19 +21,24 @@ def get_param(name, decrypt=False):
     return ssm.get_parameter(Name=name, WithDecryption=decrypt)["Parameter"]["Value"]
 
 
+_cached_username = None
+_cached_password = None
+
+
 def get_connection():
-    """A fresh connection per invocation — never cached globally.
-    Caching a connection across invocations is risky for transactional
-    code like this: if an invocation is ever killed mid-transaction
-    (timeout, crash), a cached connection would silently carry a stuck,
-    uncommitted transaction — and its row lock — into the next call."""
+    """A fresh connection per invocation, but credentials are cached —
+    they carry no transactional risk, unlike an open connection would."""
+    global _cached_username, _cached_password
+
     host = os.environ.get("DB_HOST")
-    username = get_param(f"/cloudmart/{ENVIRONMENT}/db/username", decrypt=True)
-    password = get_param(f"/cloudmart/{ENVIRONMENT}/db/password", decrypt=True)
+    if _cached_username is None:
+        _cached_username = get_param(f"/cloudmart/{ENVIRONMENT}/db/username", decrypt=True)
+    if _cached_password is None:
+        _cached_password = get_param(f"/cloudmart/{ENVIRONMENT}/db/password", decrypt=True)
     dbname = os.environ.get("DB_NAME", "cloudmart")
 
     return pymysql.connect(
-        host=host, user=username, password=password, db=dbname,
+        host=host, user=_cached_username, password=_cached_password, db=dbname,
         cursorclass=pymysql.cursors.DictCursor, autocommit=False,
         connect_timeout=5, read_timeout=8, write_timeout=8
     )
