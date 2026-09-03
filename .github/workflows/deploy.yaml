@@ -150,7 +150,7 @@ jobs:
 
       - name: Package Lambdas with dependencies
         run: |
-          for name in authorizer product apply-schema; do
+          for name in authorizer product order apply-schema; do
             cd lambdas/$name
             pip install pymysql -t . --quiet 2>/dev/null || true
             zip -r "../../${name}.zip" . -x "*.pyc"
@@ -166,6 +166,7 @@ jobs:
           echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
           aws s3 cp authorizer.zip "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
           aws s3 cp product.zip "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
+          aws s3 cp order.zip "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
           aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
       - name: Deploy app-stack via Change Set
@@ -183,20 +184,12 @@ jobs:
       # update explicitly here so code changes always actually take effect.
       - name: Force Lambda code updates
         run: |
-          aws lambda update-function-code \
-            --function-name cloudmart-prod-authorizer \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/authorizer.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-authorizer
-
-          aws lambda update-function-code \
-            --function-name cloudmart-prod-product \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/product.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-product
-
-          aws lambda update-function-code \
-            --function-name cloudmart-prod-apply-schema \
-            --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/apply-schema.zip --publish
-          aws lambda wait function-updated --function-name cloudmart-prod-apply-schema
+          for fn in authorizer product order apply-schema; do
+            aws lambda update-function-code \
+              --function-name cloudmart-prod-$fn \
+              --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/$fn.zip --publish
+            aws lambda wait function-updated --function-name cloudmart-prod-$fn
+          done
 
   # ═══════════════════════════════════════════
   # 5. APPLY SCHEMA
