@@ -1,9 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  CloudMart app-stack (Milestone 3 scope) — Lambda Authorizer, Product
-  Lambda, the EventBridge bus with its low-stock rule, the SNS low-stock
-  topic, and a one-time schema-apply Lambda. Order and Report Generate
-  Lambdas are added in a later milestone as an additive stack update.
+  CloudMart app-stack — Lambda Authorizer, Product Lambda, Order Lambda,
+  the EventBridge bus with its low-stock and order-confirmation rules,
+  two SNS topics, and a one-time schema-apply Lambda.
 
 Parameters:
   Environment:
@@ -18,7 +17,7 @@ Parameters:
 
   AlertEmail:
     Type: String
-    Description: Email address to receive low-stock alerts
+    Description: Email address to receive low-stock and order confirmation alerts
 
 Resources:
 
@@ -54,10 +53,35 @@ Resources:
             Action: sns:Publish
             Resource: !Ref LowStockAlertsTopic
 
+  # ---------- SNS Topic: Order confirmations ----------
+  OrderConfirmationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub cloudmart-${Environment}-order-confirmations
+
+  OrderConfirmationsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OrderConfirmationsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  OrderConfirmationsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref OrderConfirmationsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref OrderConfirmationsTopic
+
   # ---------- LAMBDA AUTHORIZER ----------
-  # Public entry point via Function URL — checks the token, then invokes
-  # Product Lambda directly. Order routing will be added once OrderFunction
-  # exists in a later milestone.
+  # Public entry point via Function URL — checks the token, then routes
+  # to Product Lambda or Order Lambda based on the request path.
   AuthorizerFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -78,6 +102,7 @@ Resources:
           ENVIRONMENT: !Ref Environment
           AUTH_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/token
           PRODUCT_LAMBDA_NAME: !Ref ProductFunction
+          ORDER_LAMBDA_NAME: !Ref OrderFunction
       Code:
         S3Bucket:
           Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
@@ -89,32 +114,13 @@ Resources:
       TargetFunctionArn: !Ref AuthorizerFunction
       AuthType: NONE
 
-  # Two separate permission statements are both required for a public
-  # (AuthType: NONE) Function URL — this matches AWS's own documented
-  # default policy. lambda:InvokeFunctionUrl lets the URL itself be hit;
-  # lambda:InvokeFunction is what actually lets Lambda execute the
-  # function once invoked that way. FunctionUrlAuthType is only a valid
-  # condition on the InvokeFunctionUrl action — the equivalent guard for
-  # the InvokeFunction action is the separate InvokedViaFunctionUrl
-  # property, which restricts this permission to function-URL calls only
-  # (not direct lambda:Invoke from anywhere else).
   AuthorizerFunctionUrlPermission:
     Type: AWS::Lambda::Permission
-    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
-
-  AuthorizerFunctionInvokePermission:
-    Type: AWS::Lambda::Permission
-    DependsOn: AuthorizerFunctionUrl
-    Properties:
-      FunctionName: !Ref AuthorizerFunction
-      Action: lambda:InvokeFunction
-      Principal: "*"
-      InvokedViaFunctionUrl: true
 
   # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
@@ -145,6 +151,35 @@ Resources:
           Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
         S3Key: lambdas/product.zip
 
+  # ---------- ORDER SERVICE: Order Lambda ----------
+  OrderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-order
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-order-role-arn
+      Timeout: 20
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_NAME: cloudmart
+          EVENT_BUS_NAME: !Ref CloudMartEventBus
+          LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
+        S3Key: lambdas/order.zip
+
   # ---------- EVENTBRIDGE RULE: low stock → SNS TOPIC ----------
   LowStockAlertRule:
     Type: AWS::Events::Rule
@@ -161,6 +196,20 @@ Resources:
       Targets:
         - Arn: !Ref LowStockAlertsTopic
           Id: LowStockAlertsTarget
+
+  # ---------- EVENTBRIDGE RULE: order confirmed → SNS TOPIC ----------
+  OrderConfirmedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cloudmart-${Environment}-order-confirmed-rule
+      EventBusName: !Ref CloudMartEventBus
+      EventPattern:
+        source: ["cloudmart.orders"]
+        detail-type: ["OrderConfirmed"]
+      State: ENABLED
+      Targets:
+        - Arn: !Ref OrderConfirmationsTopic
+          Id: OrderConfirmationsTarget
 
   # ---------- One-time schema apply ----------
   ApplySchemaFunction:
@@ -210,7 +259,17 @@ Outputs:
     Export:
       Name: !Sub cloudmart-${Environment}-low-stock-topic-arn
 
+  OrderConfirmationsTopicArn:
+    Value: !Ref OrderConfirmationsTopic
+    Export:
+      Name: !Sub cloudmart-${Environment}-order-confirmations-topic-arn
+
   ProductFunctionName:
     Value: !Ref ProductFunction
     Export:
       Name: !Sub cloudmart-${Environment}-product-function-name
+
+  OrderFunctionName:
+    Value: !Ref OrderFunction
+    Export:
+      Name: !Sub cloudmart-${Environment}-order-function-name
