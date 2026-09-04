@@ -2,8 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   CloudMart app-stack — Lambda Authorizer, Product Lambda, Order Lambda,
   the EventBridge bus with its low-stock and order-confirmation rules,
-  two SNS topics (delivering plain-text messages via EventBridge Input
-  Transformers, not raw JSON), and a one-time schema-apply Lambda.
+  two SNS topics, and a one-time schema-apply Lambda.
 
 Parameters:
   Environment:
@@ -81,6 +80,8 @@ Resources:
             Resource: !Ref OrderConfirmationsTopic
 
   # ---------- LAMBDA AUTHORIZER ----------
+  # Public entry point via Function URL — checks the token, then routes
+  # to Product Lambda or Order Lambda based on the request path.
   AuthorizerFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -115,11 +116,21 @@ Resources:
 
   AuthorizerFunctionUrlPermission:
     Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
+
+  AuthorizerFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
+    Properties:
+      FunctionName: !Ref AuthorizerFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
 
   # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
@@ -159,8 +170,8 @@ Resources:
       Handler: handler.lambda_handler
       Role:
         Fn::ImportValue: !Sub cloudmart-${Environment}-order-role-arn
-      Timeout: 30
-      MemorySize: 512
+      Timeout: 20
+      MemorySize: 256
       VpcConfig:
         SubnetIds:
           - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
@@ -180,9 +191,6 @@ Resources:
         S3Key: lambdas/order.zip
 
   # ---------- EVENTBRIDGE RULE: low stock → SNS TOPIC ----------
-  # InputTransformer rewrites the raw event JSON into a plain-text
-  # message before SNS ever sees it — the email reads like a sentence,
-  # not a JSON dump.
   LowStockAlertRule:
     Type: AWS::Events::Rule
     Properties:
@@ -198,13 +206,6 @@ Resources:
       Targets:
         - Arn: !Ref LowStockAlertsTopic
           Id: LowStockAlertsTarget
-          InputTransformer:
-            InputPathsMap:
-              productId: "$.detail.productId"
-              stockCount: "$.detail.stockCount"
-            InputTemplate: >-
-              "CloudMart Low Stock Alert: Product ID <productId> now has
-              only <stockCount> units remaining. Please restock soon."
 
   # ---------- EVENTBRIDGE RULE: order confirmed → SNS TOPIC ----------
   OrderConfirmedRule:
@@ -219,39 +220,6 @@ Resources:
       Targets:
         - Arn: !Ref OrderConfirmationsTopic
           Id: OrderConfirmationsTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-              totalAmount: "$.detail.totalAmount"
-            InputTemplate: >-
-              "CloudMart Order Confirmation: Your order #<orderId> has
-              been confirmed. Total amount: $<totalAmount>. Thank you
-              for shopping with CloudMart, customer #<customerId>!"
-
-  # ---------- EVENTBRIDGE RULE: order failed → SNS TOPIC ----------
-  # Reuses the same order-confirmations topic so ops sees both outcomes
-  # in one place; the message text makes clear which is which.
-  OrderFailedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-failed-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderFailed"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderFailedTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-            InputTemplate: >-
-              "CloudMart Order Failed: Order #<orderId> for customer
-              #<customerId> could not be completed. Please check the
-              order history for details."
 
   # ---------- One-time schema apply ----------
   ApplySchemaFunction:
