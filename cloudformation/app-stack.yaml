@@ -115,11 +115,28 @@ Resources:
 
   AuthorizerFunctionUrlPermission:
     Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
+
+  # Both statements are required for a public (AuthType: NONE) Function
+  # URL — this matches AWS's own documented default policy.
+  # InvokeFunctionUrl lets the URL itself be hit; InvokeFunction is what
+  # actually lets Lambda execute once invoked that way. This exact
+  # resource has been dropped from this file multiple times during
+  # full-file rewrites — if editing this template again, verify this
+  # block survives the edit before committing.
+  AuthorizerFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: AuthorizerFunctionUrl
+    Properties:
+      FunctionName: !Ref AuthorizerFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
 
   # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
