@@ -128,11 +128,13 @@ def place_order(body):
                 if not product:
                     conn.rollback()
                     publish_metric("OrdersFailed", {"Environment": ENVIRONMENT, "FailureReason": "PRODUCT_NOT_FOUND"})
+                    publish_order_event("OrderFailed", None, customer_id, "FAILED", {"reason": "PRODUCT_NOT_FOUND"})
                     return response(400, {"error": "validation_error", "message": f"Product {item['product_id']} not found"})
 
                 if product["stock_count"] < item["quantity"]:
                     conn.rollback()
                     publish_metric("OrdersFailed", {"Environment": ENVIRONMENT, "FailureReason": "INSUFFICIENT_STOCK"})
+                    publish_order_event("OrderFailed", None, customer_id, "FAILED", {"reason": "INSUFFICIENT_STOCK", "productId": item["product_id"]})
                     log("INFO", "Order failed - insufficient stock", productId=item["product_id"])
                     return response(409, {
                         "error": "insufficient_stock",
@@ -193,11 +195,13 @@ def place_order(body):
         conn.rollback()
         log("ERROR", "Database error during order placement", error=str(e))
         publish_metric("OrdersFailed", {"Environment": ENVIRONMENT, "FailureReason": "DB_UNAVAILABLE"})
+        publish_order_event("OrderFailed", None, customer_id, "FAILED", {"reason": "DB_UNAVAILABLE"})
         return response(500, {"error": "internal_error", "message": "Database error"})
     except Exception as e:
         conn.rollback()
         log("ERROR", "Unhandled exception during order placement", error=str(e))
         publish_metric("OrdersFailed", {"Environment": ENVIRONMENT, "FailureReason": "INTERNAL_ERROR"})
+        publish_order_event("OrderFailed", None, customer_id, "FAILED", {"reason": "INTERNAL_ERROR"})
         return response(500, {"error": "internal_error", "message": "Unexpected error"})
     finally:
         conn.close()
