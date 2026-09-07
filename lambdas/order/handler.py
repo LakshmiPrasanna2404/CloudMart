@@ -4,21 +4,67 @@ import re
 
 import boto3
 import pymysql
+from botocore.config import Config
 
 
-ssm = boto3.client("ssm")
-events_client = boto3.client("events")
-cloudwatch = boto3.client("cloudwatch")
+# ============================================================
+# AWS CLIENT CONFIGURATION
+# ============================================================
 
+aws_config = Config(
+    connect_timeout=2,
+    read_timeout=2,
+    retries={
+        "max_attempts": 1
+    }
+)
+
+ssm = boto3.client(
+    "ssm",
+    config=aws_config
+)
+
+events_client = boto3.client(
+    "events",
+    config=aws_config
+)
+
+cloudwatch = boto3.client(
+    "cloudwatch",
+    config=aws_config
+)
+
+
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
 EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME")
-LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))
+LOW_STOCK_THRESHOLD = int(
+    os.environ.get("LOW_STOCK_THRESHOLD", "10")
+)
 
+
+# ============================================================
+# LOGGING
+# ============================================================
 
 def log(level, message, **extra):
-    print(json.dumps({"level": level, "message": message, **extra}))
+    print(
+        json.dumps(
+            {
+                "level": level,
+                "message": message,
+                **extra
+            }
+        )
+    )
 
+
+# ============================================================
+# SSM PARAMETER
+# ============================================================
 
 def get_param(name, decrypt=False):
     return ssm.get_parameter(
@@ -27,15 +73,32 @@ def get_param(name, decrypt=False):
     )["Parameter"]["Value"]
 
 
+# ============================================================
+# DATABASE CREDENTIAL CACHE
+# ============================================================
+
 _cached_username = None
 _cached_password = None
 
 
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
 def get_connection():
-    """Create a fresh database connection for each invocation."""
+    """
+    Create a fresh MySQL connection for each Lambda invocation.
+
+    Username and password are cached between warm invocations,
+    but the database connection itself is always fresh.
+    """
+
     global _cached_username, _cached_password
 
     host = os.environ.get("DB_HOST")
+
+    if not host:
+        raise RuntimeError("DB_HOST environment variable is not configured")
 
     if _cached_username is None:
         _cached_username = get_param(
@@ -49,7 +112,10 @@ def get_connection():
             decrypt=True
         )
 
-    dbname = os.environ.get("DB_NAME", "cloudmart")
+    dbname = os.environ.get(
+        "DB_NAME",
+        "cloudmart"
+    )
 
     return pymysql.connect(
         host=host,
@@ -64,15 +130,26 @@ def get_connection():
     )
 
 
+# ============================================================
+# HTTP RESPONSE
+# ============================================================
+
 def response(status_code, body):
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json"
         },
-        "body": json.dumps(body, default=str)
+        "body": json.dumps(
+            body,
+            default=str
+        )
     }
 
+
+# ============================================================
+# ORDER EVENT
+# ============================================================
 
 def publish_order_event(
     detail_type,
@@ -91,7 +168,8 @@ def publish_order_event(
         detail.update(extra)
 
     try:
-        events_client.put_events(
+
+        result = events_client.put_events(
             Entries=[
                 {
                     "Source": "cloudmart.orders",
@@ -102,14 +180,32 @@ def publish_order_event(
             ]
         )
 
-        log(
-            "INFO",
-            f"Published {detail_type} event",
-            orderId=order_id,
-            status=status
+        failed_count = result.get(
+            "FailedEntryCount",
+            0
         )
 
+        if failed_count > 0:
+
+            log(
+                "ERROR",
+                f"Failed to publish {detail_type} event",
+                orderId=order_id,
+                status=status,
+                result=result
+            )
+
+        else:
+
+            log(
+                "INFO",
+                f"Published {detail_type} event",
+                orderId=order_id,
+                status=status
+            )
+
     except Exception as e:
+
         log(
             "ERROR",
             "Failed to publish order event",
@@ -118,9 +214,17 @@ def publish_order_event(
         )
 
 
-def publish_inventory_event(product_id, stock_count):
+# ============================================================
+# INVENTORY EVENT
+# ============================================================
+
+def publish_inventory_event(
+    product_id,
+    stock_count
+):
     try:
-        events_client.put_events(
+
+        result = events_client.put_events(
             Entries=[
                 {
                     "Source": "cloudmart.inventory",
@@ -136,14 +240,32 @@ def publish_inventory_event(product_id, stock_count):
             ]
         )
 
-        log(
-            "INFO",
-            "Published InventoryChanged event",
-            productId=product_id,
-            stockCount=stock_count
+        failed_count = result.get(
+            "FailedEntryCount",
+            0
         )
 
+        if failed_count > 0:
+
+            log(
+                "ERROR",
+                "Failed to publish inventory event",
+                productId=product_id,
+                stockCount=stock_count,
+                result=result
+            )
+
+        else:
+
+            log(
+                "INFO",
+                "Published InventoryChanged event",
+                productId=product_id,
+                stockCount=stock_count
+            )
+
     except Exception as e:
+
         log(
             "ERROR",
             "Failed to publish inventory event",
@@ -151,8 +273,16 @@ def publish_inventory_event(product_id, stock_count):
         )
 
 
-def publish_metric(metric_name, dimensions=None):
+# ============================================================
+# CLOUDWATCH METRIC
+# ============================================================
+
+def publish_metric(
+    metric_name,
+    dimensions=None
+):
     try:
+
         cloudwatch.put_metric_data(
             Namespace="cloudmart",
             MetricData=[
@@ -162,16 +292,19 @@ def publish_metric(metric_name, dimensions=None):
                     "Unit": "Count",
                     "Dimensions": [
                         {
-                            "Name": k,
-                            "Value": v
+                            "Name": key,
+                            "Value": value
                         }
-                        for k, v in (dimensions or {}).items()
+                        for key, value in (
+                            dimensions or {}
+                        ).items()
                     ]
                 }
             ]
         )
 
     except Exception as e:
+
         log(
             "ERROR",
             "Failed to publish metric",
@@ -179,6 +312,10 @@ def publish_metric(metric_name, dimensions=None):
             metric=metric_name
         )
 
+
+# ============================================================
+# ORDER HISTORY
+# ============================================================
 
 def write_order_history(
     cursor,
@@ -189,7 +326,12 @@ def write_order_history(
     cursor.execute(
         """
         INSERT INTO order_history
-        (order_id, previous_status, new_status, changed_by)
+        (
+            order_id,
+            previous_status,
+            new_status,
+            changed_by
+        )
         VALUES (%s, %s, %s, %s)
         """,
         (
@@ -201,13 +343,19 @@ def write_order_history(
     )
 
 
+# ============================================================
+# PLACE ORDER
+# ============================================================
+
 def place_order(body):
+
     customer_id = body.get("customer_id")
     items = body.get("items")
 
-    # -----------------------------
+    # --------------------------------------------------------
     # Validate request
-    # -----------------------------
+    # --------------------------------------------------------
+
     if (
         not customer_id
         or not items
@@ -226,11 +374,13 @@ def place_order(body):
         )
 
     for item in items:
+
         if (
             "product_id" not in item
             or "quantity" not in item
             or item["quantity"] <= 0
         ):
+
             return response(
                 400,
                 {
@@ -242,16 +392,24 @@ def place_order(body):
                 }
             )
 
-    conn = get_connection()
+    conn = None
 
     try:
+
+        # ----------------------------------------------------
+        # Connect to database
+        # ----------------------------------------------------
+
+        conn = get_connection()
+
         with conn.cursor() as cur:
 
-            # -----------------------------------------
-            # Check all products and available stock
-            # -----------------------------------------
             order_items_data = []
             total_amount = 0
+
+            # ------------------------------------------------
+            # Check products and stock
+            # ------------------------------------------------
 
             for item in items:
 
@@ -267,12 +425,19 @@ def place_order(body):
                       AND is_active = TRUE
                     FOR UPDATE
                     """,
-                    (item["product_id"],)
+                    (
+                        item["product_id"],
+                    )
                 )
 
                 product = cur.fetchone()
 
+                # --------------------------------------------
+                # Product not found
+                # --------------------------------------------
+
                 if not product:
+
                     conn.rollback()
 
                     publish_metric(
@@ -299,12 +464,18 @@ def place_order(body):
                             "error": "validation_error",
                             "message": (
                                 f"Product "
-                                f"{item['product_id']} not found"
+                                f"{item['product_id']} "
+                                f"not found"
                             )
                         }
                     )
 
+                # --------------------------------------------
+                # Insufficient stock
+                # --------------------------------------------
+
                 if product["stock_count"] < item["quantity"]:
+
                     conn.rollback()
 
                     publish_metric(
@@ -343,7 +514,13 @@ def place_order(body):
                         }
                     )
 
-                unit_price = float(product["price"])
+                # --------------------------------------------
+                # Calculate order total
+                # --------------------------------------------
+
+                unit_price = float(
+                    product["price"]
+                )
 
                 order_items_data.append(
                     {
@@ -355,16 +532,22 @@ def place_order(body):
                 )
 
                 total_amount += (
-                    unit_price * item["quantity"]
+                    unit_price *
+                    item["quantity"]
                 )
 
-            # -----------------------------------------
-            # Create order
-            # -----------------------------------------
+            # ------------------------------------------------
+            # Create order as PENDING
+            # ------------------------------------------------
+
             cur.execute(
                 """
                 INSERT INTO orders
-                (customer_id, status, total_amount)
+                (
+                    customer_id,
+                    status,
+                    total_amount
+                )
                 VALUES (%s, %s, %s)
                 """,
                 (
@@ -376,6 +559,10 @@ def place_order(body):
 
             order_id = cur.lastrowid
 
+            # ------------------------------------------------
+            # Write PENDING history
+            # ------------------------------------------------
+
             write_order_history(
                 cur,
                 order_id,
@@ -383,15 +570,17 @@ def place_order(body):
                 "PENDING"
             )
 
-            # -----------------------------------------
-            # Deduct stock + insert order items
-            # -----------------------------------------
+            # ------------------------------------------------
+            # Deduct stock and create order items
+            # ------------------------------------------------
+
             for oi in order_items_data:
 
                 cur.execute(
                     """
                     UPDATE products
-                    SET stock_count = stock_count - %s
+                    SET stock_count =
+                        stock_count - %s
                     WHERE product_id = %s
                     """,
                     (
@@ -401,22 +590,31 @@ def place_order(body):
                 )
 
                 # IMPORTANT:
-                # Get remaining stock BEFORE COMMIT.
-                # This prevents a second DB query after
-                # commit from hanging the Lambda.
+                # Read remaining stock BEFORE COMMIT.
                 cur.execute(
                     """
                     SELECT stock_count
                     FROM products
                     WHERE product_id = %s
                     """,
-                    (oi["product_id"],)
+                    (
+                        oi["product_id"],
+                    )
                 )
 
-                remaining = cur.fetchone()["stock_count"]
+                stock_result = cur.fetchone()
 
-                # Save the value in memory.
+                remaining = stock_result[
+                    "stock_count"
+                ]
+
+                # Save it in memory.
+                # No DB query will be needed after COMMIT.
                 oi["remaining_stock"] = remaining
+
+                # --------------------------------------------
+                # Create order item
+                # --------------------------------------------
 
                 cur.execute(
                     """
@@ -439,9 +637,10 @@ def place_order(body):
                     )
                 )
 
-            # -----------------------------------------
+            # ------------------------------------------------
             # Confirm order
-            # -----------------------------------------
+            # ------------------------------------------------
+
             cur.execute(
                 """
                 UPDATE orders
@@ -454,6 +653,10 @@ def place_order(body):
                 )
             )
 
+            # ------------------------------------------------
+            # Write CONFIRMED history
+            # ------------------------------------------------
+
             write_order_history(
                 cur,
                 order_id,
@@ -461,14 +664,27 @@ def place_order(body):
                 "CONFIRMED"
             )
 
-            # -----------------------------------------
-            # Commit transaction
-            # -----------------------------------------
+            # ------------------------------------------------
+            # COMMIT TRANSACTION
+            # ------------------------------------------------
+
             conn.commit()
 
-        # ---------------------------------------------
-        # Post-commit events
-        # ---------------------------------------------
+        # ====================================================
+        # DATABASE TRANSACTION IS COMPLETE
+        # ====================================================
+
+        log(
+            "INFO",
+            "Order transaction committed",
+            orderId=order_id,
+            totalAmount=total_amount
+        )
+
+        # ----------------------------------------------------
+        # Publish order events
+        # ----------------------------------------------------
+
         publish_order_event(
             "OrderPlaced",
             order_id,
@@ -486,20 +702,14 @@ def place_order(body):
             }
         )
 
-        publish_metric(
-            "OrdersPlaced",
-            {
-                "Environment": ENVIRONMENT
-            }
-        )
-
-        # ---------------------------------------------
-        # Low-stock check
+        # ----------------------------------------------------
+        # Low-stock notification
         #
         # IMPORTANT:
-        # No database query here.
-        # We already saved remaining_stock above.
-        # ---------------------------------------------
+        # We use the stock value already captured BEFORE
+        # commit. No DB query is performed here.
+        # ----------------------------------------------------
+
         for oi in order_items_data:
 
             remaining = oi["remaining_stock"]
@@ -511,9 +721,10 @@ def place_order(body):
                     remaining
                 )
 
-        # ---------------------------------------------
-        # Return successful response
-        # ---------------------------------------------
+        # ----------------------------------------------------
+        # SUCCESS RESPONSE
+        # ----------------------------------------------------
+
         log(
             "INFO",
             "Order confirmed - returning response",
@@ -530,9 +741,17 @@ def place_order(body):
             }
         )
 
+    # ========================================================
+    # DATABASE ERROR
+    # ========================================================
+
     except pymysql.Error as e:
 
-        conn.rollback()
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
         log(
             "ERROR",
@@ -566,9 +785,17 @@ def place_order(body):
             }
         )
 
+    # ========================================================
+    # GENERAL ERROR
+    # ========================================================
+
     except Exception as e:
 
-        conn.rollback()
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
         log(
             "ERROR",
@@ -602,9 +829,23 @@ def place_order(body):
             }
         )
 
-    finally:
-        conn.close()
+    # ========================================================
+    # CLOSE CONNECTION
+    # ========================================================
 
+    finally:
+
+        if conn:
+
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ============================================================
+# GET ORDER
+# ============================================================
 
 def get_order(order_id):
 
@@ -614,9 +855,19 @@ def get_order(order_id):
 
         with conn.cursor() as cur:
 
+            # ------------------------------------------------
+            # Get order
+            # ------------------------------------------------
+
             cur.execute(
-                "SELECT * FROM orders WHERE order_id = %s",
-                (order_id,)
+                """
+                SELECT *
+                FROM orders
+                WHERE order_id = %s
+                """,
+                (
+                    order_id,
+                )
             )
 
             order = cur.fetchone()
@@ -631,12 +882,26 @@ def get_order(order_id):
                     }
                 )
 
+            # ------------------------------------------------
+            # Get order items
+            # ------------------------------------------------
+
             cur.execute(
-                "SELECT * FROM order_items WHERE order_id = %s",
-                (order_id,)
+                """
+                SELECT *
+                FROM order_items
+                WHERE order_id = %s
+                """,
+                (
+                    order_id,
+                )
             )
 
             order["items"] = cur.fetchall()
+
+            # ------------------------------------------------
+            # Get order history
+            # ------------------------------------------------
 
             cur.execute(
                 """
@@ -645,7 +910,9 @@ def get_order(order_id):
                 WHERE order_id = %s
                 ORDER BY changed_at
                 """,
-                (order_id,)
+                (
+                    order_id,
+                )
             )
 
             order["history"] = cur.fetchall()
@@ -656,8 +923,13 @@ def get_order(order_id):
         )
 
     finally:
+
         conn.close()
 
+
+# ============================================================
+# LIST ORDERS BY CUSTOMER
+# ============================================================
 
 def list_orders_by_customer(customer_id):
 
@@ -674,7 +946,9 @@ def list_orders_by_customer(customer_id):
                 WHERE customer_id = %s
                 ORDER BY created_at DESC
                 """,
-                (customer_id,)
+                (
+                    customer_id,
+                )
             )
 
             orders = cur.fetchall()
@@ -687,26 +961,40 @@ def list_orders_by_customer(customer_id):
         )
 
     finally:
+
         conn.close()
 
 
+# ============================================================
+# LAMBDA HANDLER
+# ============================================================
+
 def lambda_handler(event, context):
 
-    http = event.get(
-        "requestContext",
-        {}
-    ).get(
-        "http",
-        {}
+    http = (
+        event
+        .get("requestContext", {})
+        .get("http", {})
     )
 
-    method = http.get("method", "")
-    path = http.get("path", "")
+    method = http.get(
+        "method",
+        ""
+    )
+
+    path = http.get(
+        "path",
+        ""
+    )
 
     query_params = (
         event.get("queryStringParameters")
         or {}
     )
+
+    # --------------------------------------------------------
+    # Parse JSON body
+    # --------------------------------------------------------
 
     try:
 
@@ -726,20 +1014,42 @@ def lambda_handler(event, context):
             }
         )
 
+    # --------------------------------------------------------
+    # Match /orders/{id}
+    # --------------------------------------------------------
+
     id_match = re.match(
         r"^/orders/(\d+)$",
         path
     )
 
-    if method == "POST" and path == "/orders":
+    # --------------------------------------------------------
+    # POST /orders
+    # --------------------------------------------------------
+
+    if (
+        method == "POST"
+        and path == "/orders"
+    ):
 
         return place_order(body)
 
-    elif method == "GET" and id_match:
+    # --------------------------------------------------------
+    # GET /orders/{id}
+    # --------------------------------------------------------
+
+    elif (
+        method == "GET"
+        and id_match
+    ):
 
         return get_order(
             int(id_match.group(1))
         )
+
+    # --------------------------------------------------------
+    # GET /orders?customerId=1
+    # --------------------------------------------------------
 
     elif (
         method == "GET"
@@ -747,9 +1057,29 @@ def lambda_handler(event, context):
         and "customerId" in query_params
     ):
 
+        try:
+
+            customer_id = int(
+                query_params["customerId"]
+            )
+
+        except (ValueError, TypeError):
+
+            return response(
+                400,
+                {
+                    "error": "validation_error",
+                    "message": "customerId must be an integer"
+                }
+            )
+
         return list_orders_by_customer(
-            int(query_params["customerId"])
+            customer_id
         )
+
+    # --------------------------------------------------------
+    # Route not found
+    # --------------------------------------------------------
 
     else:
 
