@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
+
 Description: >
   CloudMart data-stack — RDS MySQL in the private subnet, and the S3
-  buckets for Lambda deployment artifacts and daily reports.
+  bucket for daily reports.
   Imports network resources from network-stack.
+  The Lambda deployment artifacts bucket already exists and is reused.
 
 Parameters:
+
   Environment:
     Type: String
     Default: prod
@@ -30,6 +33,12 @@ Parameters:
     NoEcho: true
     Description: Passed in at deploy time from SSM — never hardcoded
 
+  ArtifactsBucketName:
+    Type: String
+    Default: cloudmart-artifacts-393476285814
+    Description: Existing S3 bucket used for Lambda deployment artifacts
+
+
 Resources:
 
   # ---------- RDS Subnet Group ----------
@@ -45,11 +54,10 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db-subnet-group
 
+
   # ---------- RDS MySQL Instance ----------
   # Username/password are passed in as parameters, fetched from SSM by the
-  # GitHub Actions workflow before deploy — RDS does not support the
-  # {{resolve:ssm-secure:...}} dynamic reference on these two properties,
-  # so the values are resolved one level up, in the pipeline, instead.
+  # GitHub Actions workflow before deploy.
   RDSInstance:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
@@ -73,23 +81,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db
 
-  # ---------- S3 Bucket: Lambda deployment artifacts ----------
-  ArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub cloudmart-artifacts-${AWS::AccountId}
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      Tags:
-        - Key: Name
-          Value: !Sub cloudmart-${Environment}-artifacts
 
   # ---------- S3 Bucket: Daily reports ----------
   ReportsBucket:
@@ -109,7 +100,9 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-reports
 
+
 Outputs:
+
   RDSEndpoint:
     Value: !GetAtt RDSInstance.Endpoint.Address
     Export:
@@ -121,7 +114,7 @@ Outputs:
       Name: !Sub cloudmart-${Environment}-rds-port
 
   ArtifactsBucketName:
-    Value: !Ref ArtifactsBucket
+    Value: !Ref ArtifactsBucketName
     Export:
       Name: !Sub cloudmart-${Environment}-artifacts-bucket-name
 
