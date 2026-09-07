@@ -40,7 +40,9 @@ cloudwatch = boto3.client(
 # ============================================================
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
+
 EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME")
+
 LOW_STOCK_THRESHOLD = int(
     os.environ.get("LOW_STOCK_THRESHOLD", "10")
 )
@@ -98,7 +100,9 @@ def get_connection():
     host = os.environ.get("DB_HOST")
 
     if not host:
-        raise RuntimeError("DB_HOST environment variable is not configured")
+        raise RuntimeError(
+            "DB_HOST environment variable is not configured"
+        )
 
     if _cached_username is None:
         _cached_username = get_param(
@@ -362,6 +366,7 @@ def place_order(body):
         or not isinstance(items, list)
         or len(items) == 0
     ):
+
         return response(
             400,
             {
@@ -440,12 +445,10 @@ def place_order(body):
 
                     conn.rollback()
 
-                    publish_metric(
-                        "OrdersFailed",
-                        {
-                            "Environment": ENVIRONMENT,
-                            "FailureReason": "PRODUCT_NOT_FOUND"
-                        }
+                    log(
+                        "INFO",
+                        "Order failed - product not found",
+                        productId=item["product_id"]
                     )
 
                     publish_order_event(
@@ -454,7 +457,8 @@ def place_order(body):
                         customer_id,
                         "FAILED",
                         {
-                            "reason": "PRODUCT_NOT_FOUND"
+                            "reason": "PRODUCT_NOT_FOUND",
+                            "productId": item["product_id"]
                         }
                     )
 
@@ -478,12 +482,12 @@ def place_order(body):
 
                     conn.rollback()
 
-                    publish_metric(
-                        "OrdersFailed",
-                        {
-                            "Environment": ENVIRONMENT,
-                            "FailureReason": "INSUFFICIENT_STOCK"
-                        }
+                    log(
+                        "INFO",
+                        "Order failed - insufficient stock",
+                        productId=item["product_id"],
+                        availableStock=product["stock_count"],
+                        requestedQuantity=item["quantity"]
                     )
 
                     publish_order_event(
@@ -493,14 +497,10 @@ def place_order(body):
                         "FAILED",
                         {
                             "reason": "INSUFFICIENT_STOCK",
-                            "productId": item["product_id"]
+                            "productId": item["product_id"],
+                            "availableStock": product["stock_count"],
+                            "requestedQuantity": item["quantity"]
                         }
-                    )
-
-                    log(
-                        "INFO",
-                        "Order failed - insufficient stock",
-                        productId=item["product_id"]
                     )
 
                     return response(
@@ -759,13 +759,12 @@ def place_order(body):
             error=str(e)
         )
 
-        publish_metric(
-            "OrdersFailed",
-            {
-                "Environment": ENVIRONMENT,
-                "FailureReason": "DB_UNAVAILABLE"
-            }
-        )
+        # Do NOT call CloudWatch here.
+        # The Lambda runs inside a private subnet and
+        # CloudWatch Monitoring endpoint is not configured.
+        #
+        # We still publish the failure event because
+        # EventBridge is available through the VPC endpoint.
 
         publish_order_event(
             "OrderFailed",
@@ -803,13 +802,8 @@ def place_order(body):
             error=str(e)
         )
 
-        publish_metric(
-            "OrdersFailed",
-            {
-                "Environment": ENVIRONMENT,
-                "FailureReason": "INTERNAL_ERROR"
-            }
-        )
+        # Do NOT call CloudWatch here.
+        # Keep the failure response reliable.
 
         publish_order_event(
             "OrderFailed",
