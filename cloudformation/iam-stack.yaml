@@ -38,7 +38,7 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Read only the three RBAC tokens stored as SSM SecureString parameters.
+              # Read only the three CloudMart RBAC tokens from SSM Parameter Store.
               - Sid: ReadRBACTokens
                 Effect: Allow
                 Action: ssm:GetParameter
