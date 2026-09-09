@@ -6,6 +6,7 @@ on:
     paths:
       - 'cloudformation/**'
       - 'lambdas/**'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -174,7 +175,9 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/app-stack.yaml \
             --stack-name cloudmart-app \
-            --parameter-overrides Environment=prod AlertEmail=${{ vars.ALERT_EMAIL }} \
+            --parameter-overrides \
+              Environment=prod \
+              AlertEmail="${{ vars.ALERT_EMAIL }}" \
             --role-arn ${{ env.EXEC_ROLE }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -248,12 +251,40 @@ jobs:
           echo "Wrong-token status: $STATUS"
           [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      - name: Correct token -> expect 200
+      # These smoke tests require the GitHub OIDC role to have
+      # secretsmanager:GetSecretValue on the CloudMart auth secrets.
+      - name: Fetch generated admin token from Secrets Manager
+        id: admintoken
+        run: |
+          TOKEN=$(aws secretsmanager get-secret-value \
+            --secret-id cloudmart-prod-auth-admin-token \
+            --query SecretString \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Generated admin token -> expect 200
         env:
-          REAL_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+          REAL_TOKEN: ${{ steps.admintoken.outputs.token }}
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $REAL_TOKEN" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Correct-token status: $STATUS"
+          echo "Generated-admin-token status: $STATUS"
           [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
+
+      - name: Orders token cannot create products -> expect 403
+        run: |
+          TOKEN=$(aws secretsmanager get-secret-value \
+            --secret-id cloudmart-prod-auth-orders-token \
+            --query SecretString \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "${{ steps.geturl.outputs.url }}products")
+          echo "Orders-token POST /products status: $STATUS"
+          [ "$STATUS" = "403" ] && echo "PASS" || (echo "FAIL" && exit 1)
