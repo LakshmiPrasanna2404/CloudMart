@@ -7,58 +7,183 @@ ssm = boto3.client("ssm")
 lambda_client = boto3.client("lambda")
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
-TOKEN_PARAM = os.environ.get("AUTH_TOKEN_PARAM", f"/cloudmart/{ENVIRONMENT}/auth/token")
+
+ADMIN_TOKEN_PARAM = os.environ.get(
+    "ADMIN_TOKEN_PARAM",
+    f"/cloudmart/{ENVIRONMENT}/auth/admin-token"
+)
+PRODUCTS_TOKEN_PARAM = os.environ.get(
+    "PRODUCTS_TOKEN_PARAM",
+    f"/cloudmart/{ENVIRONMENT}/auth/products-token"
+)
+ORDERS_TOKEN_PARAM = os.environ.get(
+    "ORDERS_TOKEN_PARAM",
+    f"/cloudmart/{ENVIRONMENT}/auth/orders-token"
+)
+
 PRODUCT_LAMBDA_NAME = os.environ.get("PRODUCT_LAMBDA_NAME")
-ORDER_LAMBDA_NAME = os.environ.get("ORDER_LAMBDA_NAME")  # not yet deployed — routes to Product only until it exists
+ORDER_LAMBDA_NAME = os.environ.get("ORDER_LAMBDA_NAME")
 
 CACHE_TTL_SECONDS = 300
-
-# Module-level cache — persists across warm invocations of the same
-# execution environment, cleared on cold start.
-_token_cache = {"value": None, "fetched_at": 0}
+_token_cache = {
+    "admin": {"value": None, "fetched_at": 0},
+    "products": {"value": None, "fetched_at": 0},
+    "orders": {"value": None, "fetched_at": 0},
+}
 
 
 def log(level, message, **extra):
     print(json.dumps({"level": level, "message": message, **extra}))
 
 
-def get_valid_token():
+def get_token(role, parameter_name):
     now = time.time()
-    if _token_cache["value"] is not None and (now - _token_cache["fetched_at"]) < CACHE_TTL_SECONDS:
-        log("INFO", "Using cached token", cache_age_seconds=round(now - _token_cache["fetched_at"], 1))
-        return _token_cache["value"]
+    cached = _token_cache[role]
 
-    log("INFO", "Cache miss or expired, fetching token from SSM")
-    response = ssm.get_parameter(Name=TOKEN_PARAM, WithDecryption=True)
-    _token_cache["value"] = response["Parameter"]["Value"]
-    _token_cache["fetched_at"] = now
-    return _token_cache["value"]
+    if cached["value"] is not None and (
+        now - cached["fetched_at"] < CACHE_TTL_SECONDS
+    ):
+        return cached["value"]
+
+    response = ssm.get_parameter(
+        Name=parameter_name,
+        WithDecryption=True
+    )
+
+    cached["value"] = response["Parameter"]["Value"]
+    cached["fetched_at"] = now
+    return cached["value"]
 
 
 def unauthorized():
     return {
         "statusCode": 401,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({"error": "unauthorized", "message": "Missing or invalid token"})
+        "body": json.dumps({
+            "error": "unauthorized",
+            "message": "Missing or invalid token"
+        })
+    }
+
+
+def forbidden():
+    return {
+        "statusCode": 403,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "error": "forbidden",
+            "message": "Token does not have permission for this operation"
+        })
     }
 
 
 def extract_bearer_token(event):
     headers = event.get("headers", {}) or {}
-    # Lambda Function URL headers arrive lowercase
     auth_header = headers.get("authorization") or headers.get("Authorization")
+
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
+
     return auth_header[len("Bearer "):].strip()
 
 
-def route_target(event):
-    """Decide which downstream Lambda handles this request based on path."""
-    path = event.get("requestContext", {}).get("http", {}).get("path", "")
-    if path.startswith("/products"):
+def get_request_details(event):
+    http = event.get("requestContext", {}).get("http", {})
+    return http.get("method", ""), http.get("path", "")
+
+
+def get_role_for_token(incoming_token):
+    token_sources = [
+        ("admin", ADMIN_TOKEN_PARAM),
+        ("products", PRODUCTS_TOKEN_PARAM),
+        ("orders", ORDERS_TOKEN_PARAM),
+    ]
+
+    for role, parameter_name in token_sources:
+        try:
+            if incoming_token == get_token(role, parameter_name):
+                return role
+        except Exception as e:
+            log(
+                "ERROR",
+                "Failed to fetch RBAC token from SSM",
+                role=role,
+                error=str(e)
+            )
+            raise
+
+    return None
+
+
+def get_route_permission(method, path):
+    """
+    Return the logical resource for the request.
+
+    Admin:
+      Full access to Products and Orders.
+
+    Products role:
+      Product API only.
+
+    Orders role:
+      Customer/order operations plus read-only product browsing.
+
+    The orders role is intentionally allowed to browse products because a
+    customer needs product information before placing an order.
+    """
+    if path == "/products" or path.startswith("/products/"):
+        if method in {"GET", "POST", "PUT", "DELETE"}:
+            return "products"
+        return None
+
+    if path == "/orders":
+        if method in {"GET", "POST"}:
+            return "orders"
+        return None
+
+    if re_match_order_cancel(path):
+        if method == "POST":
+            return "orders"
+        return None
+
+    if re_match_order_id(path):
+        if method == "GET":
+            return "orders"
+        return None
+
+    return None
+
+
+def re_match_order_id(path):
+    import re
+    return re.match(r"^/orders/(\d+)$", path) is not None
+
+
+def re_match_order_cancel(path):
+    import re
+    return re.match(r"^/orders/(\d+)/cancel$", path) is not None
+
+
+def role_allows(role, resource):
+    if role == "admin":
+        return resource in {"products", "orders"}
+
+    if role == "products":
+        return resource == "products"
+
+    if role == "orders":
+        return resource == "orders"
+
+    return False
+
+
+def route_target(path):
+    if path == "/products" or path.startswith("/products/"):
         return PRODUCT_LAMBDA_NAME
-    if path.startswith("/orders"):
+
+    if path == "/orders" or path.startswith("/orders/"):
         return ORDER_LAMBDA_NAME
+
     return None
 
 
@@ -70,31 +195,77 @@ def lambda_handler(event, context):
         return unauthorized()
 
     try:
-        valid_token = get_valid_token()
-    except Exception as e:
-        log("ERROR", "Failed to fetch auth token from SSM", error=str(e))
+        role = get_role_for_token(incoming_token)
+    except Exception:
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "internal_error", "message": "Auth check failed"})
+            "body": json.dumps({
+                "error": "internal_error",
+                "message": "Auth check failed"
+            })
         }
 
-    if incoming_token != valid_token:
-        # Deliberately generic — never reveal whether the token was
-        # missing, malformed, or simply wrong.
+    if role is None:
         log("WARN", "Request had an invalid token")
         return unauthorized()
 
-    target_function = route_target(event)
-    if not target_function:
-        log("WARN", "No route matched for path", path=event.get("requestContext", {}).get("http", {}).get("path"))
+    method, path = get_request_details(event)
+    permission = get_route_permission(method, path)
+
+    if permission is None:
+        log(
+            "WARN",
+            "No matching route or method",
+            method=method,
+            path=path,
+            role=role
+        )
         return {
             "statusCode": 404,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "not_found", "message": "No matching route"})
+            "body": json.dumps({
+                "error": "not_found",
+                "message": "No matching route"
+            })
         }
 
-    log("INFO", "Token valid, invoking downstream Lambda", target=target_function)
+    if not role_allows(role, permission):
+        log(
+            "WARN",
+            "RBAC permission denied",
+            role=role,
+            method=method,
+            path=path,
+            resource=permission
+        )
+        return forbidden()
+
+    target_function = route_target(path)
+
+    if not target_function:
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "error": "not_found",
+                "message": "No matching route"
+            })
+        }
+
+    # Pass the authenticated role to the downstream Lambda.
+    # This is used for application-level authorization decisions.
+    event.setdefault("requestContext", {}).setdefault("authorizer", {})
+    event["requestContext"]["authorizer"]["role"] = role
+
+    log(
+        "INFO",
+        "RBAC authorized, invoking downstream Lambda",
+        role=role,
+        method=method,
+        path=path,
+        target=target_function
+    )
 
     try:
         response = lambda_client.invoke(
@@ -102,12 +273,22 @@ def lambda_handler(event, context):
             InvocationType="RequestResponse",
             Payload=json.dumps(event).encode("utf-8")
         )
+
         payload = json.loads(response["Payload"].read())
         return payload
+
     except Exception as e:
-        log("ERROR", "Failed to invoke downstream Lambda", error=str(e), target=target_function)
+        log(
+            "ERROR",
+            "Failed to invoke downstream Lambda",
+            error=str(e),
+            target=target_function
+        )
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "internal_error", "message": "Downstream service failed"})
+            "body": json.dumps({
+                "error": "internal_error",
+                "message": "Downstream service failed"
+            })
         }
