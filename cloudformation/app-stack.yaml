@@ -20,7 +20,50 @@ Parameters:
     Type: String
     Description: Email address to receive low-stock and order confirmation alerts
 
+  AdminAuthToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: RBAC token for the admin role
+
+  ProductsAuthToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: RBAC token for the products role
+
+  OrdersAuthToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: RBAC token for the orders/customer role
+
 Resources:
+
+  # ---------- RBAC token parameters ----------
+  AdminAuthParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cloudmart/${Environment}/auth/admin-token
+      Type: String
+      Value: !Ref AdminAuthToken
+      Description: CloudMart admin RBAC token
+
+  ProductsAuthParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cloudmart/${Environment}/auth/products-token
+      Type: String
+      Value: !Ref ProductsAuthToken
+      Description: CloudMart products RBAC token
+
+  OrdersAuthParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cloudmart/${Environment}/auth/orders-token
+      Type: String
+      Value: !Ref OrdersAuthToken
+      Description: CloudMart orders/customer RBAC token
 
   # ---------- EventBridge Event Bus ----------
   CloudMartEventBus:
@@ -99,7 +142,9 @@ Resources:
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
-          AUTH_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/token
+          ADMIN_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/admin-token
+          PRODUCTS_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/products-token
+          ORDERS_TOKEN_PARAM: !Sub /cloudmart/${Environment}/auth/orders-token
           PRODUCT_LAMBDA_NAME: !Ref ProductFunction
           ORDER_LAMBDA_NAME: !Ref OrderFunction
       Code:
@@ -245,6 +290,29 @@ Resources:
               "CloudMart Order Confirmation: Your order #<orderId> has
               been confirmed. Total amount: $<totalAmount>. Thank you
               for shopping with CloudMart, customer #<customerId>!"
+
+  # ---------- EVENTBRIDGE RULE: order cancelled → SNS TOPIC ----------
+  OrderCancelledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cloudmart-${Environment}-order-cancelled-rule
+      EventBusName: !Ref CloudMartEventBus
+      EventPattern:
+        source: ["cloudmart.orders"]
+        detail-type: ["OrderCancelled"]
+      State: ENABLED
+      Targets:
+        - Arn: !Ref OrderConfirmationsTopic
+          Id: OrderCancelledTarget
+          InputTransformer:
+            InputPathsMap:
+              orderId: "$.detail.orderId"
+              customerId: "$.detail.customerId"
+              previousStatus: "$.detail.previousStatus"
+            InputTemplate: >-
+              "CloudMart Order Cancelled: Order #<orderId> for customer
+              #<customerId> was cancelled from status <previousStatus>.
+              Inventory has been restored."
 
   # ---------- EVENTBRIDGE RULE: order failed → SNS TOPIC ----------
   # Reuses the same order-confirmations topic so ops sees both outcomes
