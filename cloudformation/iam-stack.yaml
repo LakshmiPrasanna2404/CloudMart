@@ -38,11 +38,14 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Read only its own token parameter — never DB credentials
-              - Sid: ReadAuthToken
+              # Read only the RBAC token parameters — never DB credentials
+              - Sid: ReadRBACTokens
                 Effect: Allow
                 Action: ssm:GetParameter
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/token
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/products-token
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/orders-token
               # Invoke only Product and Order Lambdas — ARNs constructed by
               # naming convention, since app-stack (which creates these
               # functions) is deployed after iam-stack and would otherwise
