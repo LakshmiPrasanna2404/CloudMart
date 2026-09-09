@@ -274,7 +274,6 @@ Resources:
       SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
       PrivateDnsEnabled: true
 
-
   LambdaInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
