@@ -7,6 +7,7 @@ on:
       - 'cloudformation/**'
       - 'lambdas/**'
       - '.github/workflows/**'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -89,6 +90,53 @@ jobs:
           echo "::add-mask::$PASSWORD"
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+
+      - name: Create RBAC tokens in SSM Parameter Store if missing
+        run: |
+          set -euo pipefail
+
+          create_parameter() {
+            local name="$1"
+            local description="$2"
+
+            if aws ssm get-parameter --name "$name" >/dev/null 2>&1; then
+              echo "Already exists: $name"
+            else
+              TOKEN=$(openssl rand -hex 32)
+              aws ssm put-parameter \
+                --name "$name" \
+                --type SecureString \
+                --value "$TOKEN" \
+                --tier Standard \
+                --description "$description"
+              echo "Created: $name"
+            fi
+          }
+
+          create_parameter \
+            "/cloudmart/prod/auth/admin-token" \
+            "CloudMart production admin RBAC token"
+
+          create_parameter \
+            "/cloudmart/prod/auth/products-token" \
+            "CloudMart production products RBAC token"
+
+          create_parameter \
+            "/cloudmart/prod/auth/orders-token" \
+            "CloudMart production orders/customer RBAC token"
+
+      - name: Verify RBAC SSM parameters
+        run: |
+          set -euo pipefail
+
+          for name in \
+            /cloudmart/prod/auth/admin-token \
+            /cloudmart/prod/auth/products-token \
+            /cloudmart/prod/auth/orders-token
+          do
+            aws ssm get-parameter --name "$name" >/dev/null
+            echo "Verified: $name"
+          done
 
       - name: Deploy data-stack via Change Set
         run: |
@@ -216,10 +264,10 @@ jobs:
           cat response.json
 
   # ═══════════════════════════════════════════
-  # 6. VERIFY AUTH — 401 / 401 / 200
+  # 6. VERIFY AUTH — 401 / 401 / 200 / 403
   # ═══════════════════════════════════════════
   verify-auth:
-    name: Verify 401 / 401 / 200 auth flow
+    name: Verify 401 / 401 / 200 / 403 auth flow
     runs-on: ubuntu-latest
     needs: apply-schema
     steps:
@@ -237,9 +285,22 @@ jobs:
             --output text)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+      - name: Verify RBAC SSM parameters exist
+        run: |
+          set -euo pipefail
+          for name in \
+            /cloudmart/prod/auth/admin-token \
+            /cloudmart/prod/auth/products-token \
+            /cloudmart/prod/auth/orders-token
+          do
+            aws ssm get-parameter --name "$name" >/dev/null
+            echo "Found: $name"
+          done
+
       - name: No token -> expect 401
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.geturl.outputs.url }}products")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ steps.geturl.outputs.url }}products")
           echo "No-token status: $STATUS"
           [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
@@ -251,40 +312,57 @@ jobs:
           echo "Wrong-token status: $STATUS"
           [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      # These smoke tests require the GitHub OIDC role to have
-      # secretsmanager:GetSecretValue on the CloudMart auth secrets.
-      - name: Fetch generated admin token from Secrets Manager
+      - name: Fetch admin token from SSM
         id: admintoken
         run: |
-          TOKEN=$(aws secretsmanager get-secret-value \
-            --secret-id cloudmart-prod-auth-admin-token \
-            --query SecretString \
+          TOKEN=$(aws ssm get-parameter \
+            --name /cloudmart/prod/auth/admin-token \
+            --with-decryption \
+            --query 'Parameter.Value' \
             --output text)
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Generated admin token -> expect 200
+      - name: Admin token -> expect 200
         env:
           REAL_TOKEN: ${{ steps.admintoken.outputs.token }}
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $REAL_TOKEN" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Generated-admin-token status: $STATUS"
+          echo "Admin-token status: $STATUS"
           [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      - name: Orders token cannot create products -> expect 403
+      - name: Fetch orders token from SSM
+        id: orderstoken
         run: |
-          TOKEN=$(aws secretsmanager get-secret-value \
-            --secret-id cloudmart-prod-auth-orders-token \
-            --query SecretString \
+          TOKEN=$(aws ssm get-parameter \
+            --name /cloudmart/prod/auth/orders-token \
+            --with-decryption \
+            --query 'Parameter.Value' \
             --output text)
           echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Orders token cannot create products -> expect 403
+        env:
+          ORDERS_TOKEN: ${{ steps.orderstoken.outputs.token }}
+        run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST \
-            -H "Authorization: Bearer $TOKEN" \
+            -H "Authorization: Bearer $ORDERS_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{}' \
             "${{ steps.geturl.outputs.url }}products")
           echo "Orders-token POST /products status: $STATUS"
           [ "$STATUS" = "403" ] && echo "PASS" || (echo "FAIL" && exit 1)
+
+      - name: RBAC verification complete
+        run: |
+          echo "========================================"
+          echo "CloudMart RBAC verification PASSED"
+          echo "========================================"
+          echo "Missing token          -> 401 PASS"
+          echo "Invalid token          -> 401 PASS"
+          echo "Admin token            -> 200 PASS"
+          echo "Orders POST /products  -> 403 PASS"
