@@ -61,7 +61,7 @@ def get_token(role, parameter_name):
 
     if not parameter_name:
         raise RuntimeError(
-            f"SSM parameter name is not configured for role: {role}"
+            f"SSM parameter is not configured for role: {role}"
         )
 
     response = ssm.get_parameter(
@@ -72,7 +72,7 @@ def get_token(role, parameter_name):
     parameter_value = response.get("Parameter", {}).get("Value")
     if not parameter_value:
         raise RuntimeError(
-            f"SSM parameter is empty for role: {role}"
+            f"SSM parameter value is empty for role: {role}"
         )
 
     cached["value"] = parameter_value
