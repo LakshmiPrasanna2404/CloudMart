@@ -2,23 +2,37 @@ import json
 import os
 import time
 import boto3
+from botocore.config import Config
 
-ssm = boto3.client("ssm")
-lambda_client = boto3.client("lambda")
+aws_config = Config(
+    connect_timeout=2,
+    read_timeout=3,
+    retries={"max_attempts": 1},
+)
+
+secretsmanager = boto3.client(
+    "secretsmanager",
+    config=aws_config,
+)
+
+lambda_client = boto3.client(
+    "lambda",
+    config=aws_config,
+)
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
 
-ADMIN_TOKEN_PARAM = os.environ.get(
-    "ADMIN_TOKEN_PARAM",
-    f"/cloudmart/{ENVIRONMENT}/auth/admin-token"
+ADMIN_TOKEN_SECRET_ARN = os.environ.get(
+    "ADMIN_TOKEN_SECRET_ARN",
+    "",
 )
-PRODUCTS_TOKEN_PARAM = os.environ.get(
-    "PRODUCTS_TOKEN_PARAM",
-    f"/cloudmart/{ENVIRONMENT}/auth/products-token"
+PRODUCTS_TOKEN_SECRET_ARN = os.environ.get(
+    "PRODUCTS_TOKEN_SECRET_ARN",
+    "",
 )
-ORDERS_TOKEN_PARAM = os.environ.get(
-    "ORDERS_TOKEN_PARAM",
-    f"/cloudmart/{ENVIRONMENT}/auth/orders-token"
+ORDERS_TOKEN_SECRET_ARN = os.environ.get(
+    "ORDERS_TOKEN_SECRET_ARN",
+    "",
 )
 
 PRODUCT_LAMBDA_NAME = os.environ.get("PRODUCT_LAMBDA_NAME")
@@ -36,7 +50,7 @@ def log(level, message, **extra):
     print(json.dumps({"level": level, "message": message, **extra}))
 
 
-def get_token(role, parameter_name):
+def get_token(role, secret_arn):
     now = time.time()
     cached = _token_cache[role]
 
@@ -45,12 +59,22 @@ def get_token(role, parameter_name):
     ):
         return cached["value"]
 
-    response = ssm.get_parameter(
-        Name=parameter_name,
-        WithDecryption=True
+    if not secret_arn:
+        raise RuntimeError(
+            f"Secret ARN is not configured for role: {role}"
+        )
+
+    response = secretsmanager.get_secret_value(
+        SecretId=secret_arn
     )
 
-    cached["value"] = response["Parameter"]["Value"]
+    secret_value = response.get("SecretString")
+    if not secret_value:
+        raise RuntimeError(
+            f"SecretString is empty for role: {role}"
+        )
+
+    cached["value"] = secret_value
     cached["fetched_at"] = now
     return cached["value"]
 
@@ -94,9 +118,9 @@ def get_request_details(event):
 
 def get_role_for_token(incoming_token):
     token_sources = [
-        ("admin", ADMIN_TOKEN_PARAM),
-        ("products", PRODUCTS_TOKEN_PARAM),
-        ("orders", ORDERS_TOKEN_PARAM),
+        ("admin", ADMIN_TOKEN_SECRET_ARN),
+        ("products", PRODUCTS_TOKEN_SECRET_ARN),
+        ("orders", ORDERS_TOKEN_SECRET_ARN),
     ]
 
     for role, parameter_name in token_sources:
@@ -106,7 +130,7 @@ def get_role_for_token(incoming_token):
         except Exception as e:
             log(
                 "ERROR",
-                "Failed to fetch RBAC token from SSM",
+                "Failed to fetch RBAC token from Secrets Manager",
                 role=role,
                 error=str(e)
             )
