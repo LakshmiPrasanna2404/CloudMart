@@ -1,147 +1,88 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  CloudMart app-stack — Lambda Authorizer, Product Lambda, Order Lambda,
-  the EventBridge bus with its low-stock and order-confirmation rules,
-  two SNS topics (delivering plain-text messages via EventBridge Input
-  Transformers, not raw JSON), and a one-time schema-apply Lambda.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudMart application stack
 
 Parameters:
   Environment:
     Type: String
     Default: prod
-    AllowedValues: [dev, prod]
 
-  LowStockThreshold:
-    Type: Number
-    Default: 10
-    Description: Stock count below which a low-stock alert fires
+  VpcId:
+    Type: AWS::EC2::VPC::Id
 
-  AlertEmail:
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+
+  DBHost:
     Type: String
-    Description: Email address to receive low-stock and order confirmation alerts
 
+  DBName:
+    Type: String
+
+  DBUser:
+    Type: String
+
+  DBPasswordParameterName:
+    Type: String
+
+  ArtifactBucket:
+    Type: String
 
 Resources:
 
-  # ---------- RBAC tokens ----------
-  # CloudFormation generates all three token values automatically.
-  # No token value is supplied by GitHub Actions and no token is stored in Git.
-  AdminAuthSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub cloudmart-${Environment}-auth-admin-token
-      Description: CloudMart admin RBAC token
-      GenerateSecretString:
-        PasswordLength: 64
-        ExcludePunctuation: true
-        IncludeSpace: false
+  #############################################
+  # EventBridge
+  #############################################
 
-  ProductsAuthSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub cloudmart-${Environment}-auth-products-token
-      Description: CloudMart products RBAC token
-      GenerateSecretString:
-        PasswordLength: 64
-        ExcludePunctuation: true
-        IncludeSpace: false
-
-  OrdersAuthSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub cloudmart-${Environment}-auth-orders-token
-      Description: CloudMart orders/customer RBAC token
-      GenerateSecretString:
-        PasswordLength: 64
-        ExcludePunctuation: true
-        IncludeSpace: false
-
-  # ---------- EventBridge Event Bus ----------
   CloudMartEventBus:
     Type: AWS::Events::EventBus
     Properties:
-      Name: !Sub cloudmart-${Environment}-bus
+      Name: !Sub cloudmart-${Environment}-event-bus
 
-  # ---------- SNS Topic: Low stock alerts ----------
-  LowStockAlertsTopic:
+  #############################################
+  # SNS
+  #############################################
+
+  CloudMartNotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub cloudmart-${Environment}-low-stock-alerts
+      TopicName: !Sub cloudmart-${Environment}-notifications
 
-  LowStockAlertsSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref LowStockAlertsTopic
-      Protocol: email
-      Endpoint: !Ref AlertEmail
+  #############################################
+  # Authorizer Lambda
+  #############################################
 
-  LowStockTopicPolicy:
-    Type: AWS::SNS::TopicPolicy
-    Properties:
-      Topics: [!Ref LowStockAlertsTopic]
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sns:Publish
-            Resource: !Ref LowStockAlertsTopic
-
-  # ---------- SNS Topic: Order confirmations ----------
-  OrderConfirmationsTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub cloudmart-${Environment}-order-confirmations
-
-  OrderConfirmationsSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref OrderConfirmationsTopic
-      Protocol: email
-      Endpoint: !Ref AlertEmail
-
-  OrderConfirmationsTopicPolicy:
-    Type: AWS::SNS::TopicPolicy
-    Properties:
-      Topics: [!Ref OrderConfirmationsTopic]
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sns:Publish
-            Resource: !Ref OrderConfirmationsTopic
-
-  # ---------- LAMBDA AUTHORIZER ----------
   AuthorizerFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub cloudmart-${Environment}-authorizer
       Runtime: python3.12
       Handler: handler.lambda_handler
-      Role:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-authorizer-role-arn
+      Role: !GetAtt AuthorizerExecutionRole.Arn
       Timeout: 10
-      MemorySize: 128
+      MemorySize: 256
+
       VpcConfig:
-        SubnetIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
         SecurityGroupIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+
       Environment:
         Variables:
-          ENVIRONMENT: !Ref Environment
-          ADMIN_TOKEN_SECRET_ARN: !Ref AdminAuthSecret
-          PRODUCTS_TOKEN_SECRET_ARN: !Ref ProductsAuthSecret
-          ORDERS_TOKEN_SECRET_ARN: !Ref OrdersAuthSecret
-          PRODUCT_LAMBDA_NAME: !Ref ProductFunction
-          ORDER_LAMBDA_NAME: !Ref OrderFunction
+          ADMIN_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/admin-token
+          PRODUCTS_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/products-token
+          ORDERS_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/orders-token
+
       Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
-        S3Key: lambdas/authorizer.zip
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: authorizer.zip
 
   AuthorizerFunctionUrl:
     Type: AWS::Lambda::Url
@@ -151,243 +92,151 @@ Resources:
 
   AuthorizerFunctionUrlPermission:
     Type: AWS::Lambda::Permission
-    DependsOn: AuthorizerFunctionUrl
     Properties:
       FunctionName: !Ref AuthorizerFunction
       Action: lambda:InvokeFunctionUrl
-      Principal: "*"
+      Principal: '*'
       FunctionUrlAuthType: NONE
 
-  # Both statements are required for a public (AuthType: NONE) Function
-  # URL — this matches AWS's own documented default policy.
-  # InvokeFunctionUrl lets the URL itself be hit; InvokeFunction is what
-  # actually lets Lambda execute once invoked that way. This exact
-  # resource has been dropped from this file multiple times during
-  # full-file rewrites — if editing this template again, verify this
-  # block survives the edit before committing.
-  AuthorizerFunctionInvokePermission:
-    Type: AWS::Lambda::Permission
-    DependsOn: AuthorizerFunctionUrl
-    Properties:
-      FunctionName: !Ref AuthorizerFunction
-      Action: lambda:InvokeFunction
-      Principal: "*"
-      InvokedViaFunctionUrl: true
+  #############################################
+  # Product Lambda
+  #############################################
 
-  # ---------- PRODUCT SERVICE: Product Lambda ----------
   ProductFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub cloudmart-${Environment}-product
       Runtime: python3.12
       Handler: handler.lambda_handler
-      Role:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-product-role-arn
-      Timeout: 15
+      Role: !GetAtt ProductExecutionRole.Arn
+      Timeout: 30
       MemorySize: 256
+
       VpcConfig:
-        SubnetIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
         SecurityGroupIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+
       Environment:
         Variables:
-          ENVIRONMENT: !Ref Environment
-          DB_HOST:
-            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
-          DB_NAME: cloudmart
-          EVENT_BUS_NAME: !Ref CloudMartEventBus
-          LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
-      Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
-        S3Key: lambdas/product.zip
+          DB_HOST: !Ref DBHost
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUser
+          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameterName
 
-  # ---------- ORDER SERVICE: Order Lambda ----------
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: product.zip
+
+  ProductFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref ProductFunction
+      AuthType: NONE
+
+  ProductFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProductFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  #############################################
+  # Order Lambda
+  #############################################
+
   OrderFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub cloudmart-${Environment}-order
       Runtime: python3.12
       Handler: handler.lambda_handler
-      Role:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-order-role-arn
+      Role: !GetAtt OrderExecutionRole.Arn
       Timeout: 30
-      MemorySize: 512
+      MemorySize: 256
+
       VpcConfig:
-        SubnetIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
         SecurityGroupIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+
       Environment:
         Variables:
-          ENVIRONMENT: !Ref Environment
-          DB_HOST:
-            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
-          DB_NAME: cloudmart
+          DB_HOST: !Ref DBHost
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUser
+          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameterName
           EVENT_BUS_NAME: !Ref CloudMartEventBus
-          LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
+          SNS_TOPIC_ARN: !Ref CloudMartNotificationTopic
+
       Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
-        S3Key: lambdas/order.zip
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: order.zip
 
-  # ---------- EVENTBRIDGE RULE: low stock → SNS TOPIC ----------
-  # InputTransformer rewrites the raw event JSON into a plain-text
-  # message before SNS ever sees it — the email reads like a sentence,
-  # not a JSON dump.
-  LowStockAlertRule:
-    Type: AWS::Events::Rule
+  OrderFunctionUrl:
+    Type: AWS::Lambda::Url
     Properties:
-      Name: !Sub cloudmart-${Environment}-low-stock-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.inventory"]
-        detail-type: ["InventoryChanged"]
-        detail:
-          stockCount:
-            - numeric: ["<", !Ref LowStockThreshold]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref LowStockAlertsTopic
-          Id: LowStockAlertsTarget
-          InputTransformer:
-            InputPathsMap:
-              productId: "$.detail.productId"
-              stockCount: "$.detail.stockCount"
-            InputTemplate: >-
-              "CloudMart Low Stock Alert: Product ID <productId> now has
-              only <stockCount> units remaining. Please restock soon."
+      TargetFunctionArn: !Ref OrderFunction
+      AuthType: NONE
 
-  # ---------- EVENTBRIDGE RULE: order confirmed → SNS TOPIC ----------
-  OrderConfirmedRule:
-    Type: AWS::Events::Rule
+  OrderFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
     Properties:
-      Name: !Sub cloudmart-${Environment}-order-confirmed-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderConfirmed"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderConfirmationsTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-              totalAmount: "$.detail.totalAmount"
-            InputTemplate: >-
-              "CloudMart Order Confirmation: Your order #<orderId> has
-              been confirmed. Total amount: $<totalAmount>. Thank you
-              for shopping with CloudMart, customer #<customerId>!"
+      FunctionName: !Ref OrderFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
 
-  # ---------- EVENTBRIDGE RULE: order cancelled → SNS TOPIC ----------
-  OrderCancelledRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-cancelled-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderCancelled"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderCancelledTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-              previousStatus: "$.detail.previousStatus"
-            InputTemplate: >-
-              "CloudMart Order Cancelled: Order #<orderId> for customer
-              #<customerId> was cancelled from status <previousStatus>.
-              Inventory has been restored."
+  #############################################
+  # Apply Schema Lambda
+  #############################################
 
-  # ---------- EVENTBRIDGE RULE: order failed → SNS TOPIC ----------
-  # Reuses the same order-confirmations topic so ops sees both outcomes
-  # in one place; the message text makes clear which is which.
-  OrderFailedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-failed-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderFailed"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderFailedTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-            InputTemplate: >-
-              "CloudMart Order Failed: Order #<orderId> for customer
-              #<customerId> could not be completed. Please check the
-              order history for details."
-
-  # ---------- One-time schema apply ----------
   ApplySchemaFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub cloudmart-${Environment}-apply-schema
       Runtime: python3.12
       Handler: handler.lambda_handler
-      Role:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-product-role-arn
-      Timeout: 30
-      MemorySize: 128
+      Role: !GetAtt ApplySchemaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 256
+
       VpcConfig:
-        SubnetIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
         SecurityGroupIds:
-          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+
       Environment:
         Variables:
-          ENVIRONMENT: !Ref Environment
-          DB_HOST:
-            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_HOST: !Ref DBHost
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUser
+          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameterName
+
       Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
-        S3Key: lambdas/apply-schema.zip
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: apply-schema.zip
 
 Outputs:
+
   AuthorizerFunctionUrl:
-    Description: Public HTTPS entry point for the CloudMart API
     Value: !GetAtt AuthorizerFunctionUrl.FunctionUrl
-    Export:
-      Name: !Sub cloudmart-${Environment}-authorizer-url
+
+  ProductFunctionUrl:
+    Value: !GetAtt ProductFunctionUrl.FunctionUrl
+
+  OrderFunctionUrl:
+    Value: !GetAtt OrderFunctionUrl.FunctionUrl
 
   EventBusName:
     Value: !Ref CloudMartEventBus
-    Export:
-      Name: !Sub cloudmart-${Environment}-event-bus-name
 
-  EventBusArn:
-    Value: !GetAtt CloudMartEventBus.Arn
-    Export:
-      Name: !Sub cloudmart-${Environment}-event-bus-arn
-
-  LowStockAlertsTopicArn:
-    Value: !Ref LowStockAlertsTopic
-    Export:
-      Name: !Sub cloudmart-${Environment}-low-stock-topic-arn
-
-  OrderConfirmationsTopicArn:
-    Value: !Ref OrderConfirmationsTopic
-    Export:
-      Name: !Sub cloudmart-${Environment}-order-confirmations-topic-arn
-
-  ProductFunctionName:
-    Value: !Ref ProductFunction
-    Export:
-      Name: !Sub cloudmart-${Environment}-product-function-name
-
-  OrderFunctionName:
-    Value: !Ref OrderFunction
-    Export:
-      Name: !Sub cloudmart-${Environment}-order-function-name
+  NotificationTopicArn:
+    Value: !Ref CloudMartNotificationTopic
