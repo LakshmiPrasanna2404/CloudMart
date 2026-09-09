@@ -2,11 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   CloudMart network-stack — VPC, public and private subnets, internet
   gateway, route tables, all security groups, and VPC Endpoints for
-  SSM, EventBridge, SNS, Lambda, and S3. No NAT Gateway is used.
+  SSM, EventBridge, SNS, Lambda, Secrets Manager, and S3. No NAT Gateway is used.
 
-# ─────────────────────────────────────────────
-# Parameters
-# ─────────────────────────────────────────────
 Parameters:
   Environment:
     Type: String
@@ -19,12 +16,7 @@ Parameters:
     Description: CIDR allowed to reach the EC2 ops dashboard (your IP, not 0.0.0.0/0)
     Default: 203.0.113.0/32
 
-# ─────────────────────────────────────────────
-# Resources
-# ─────────────────────────────────────────────
 Resources:
-
-  # ---------- VPC ----------
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -35,7 +27,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc
 
-  # ---------- Subnets ----------
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
@@ -67,7 +58,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-private-subnet-2
 
-  # ---------- Internet Gateway (public subnet only) ----------
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -81,7 +71,6 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  # ---------- Public route table ----------
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -104,13 +93,6 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
-
-  # ---------- Private route table (no route to the internet) ----------
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -125,7 +107,12 @@ Resources:
       SubnetId: !Ref PrivateSubnet
       RouteTableId: !Ref PrivateRouteTable
 
-  # ---------- Security Groups ----------
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -149,8 +136,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-lambda-sg
-      # No ingress rules — Lambda is never reached over the network directly.
-      # Egress rules are added below via separate SecurityGroupEgress resources.
 
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -164,15 +149,11 @@ Resources:
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for SSM, EventBridge, SNS, and Lambda interface endpoints
+      GroupDescription: Security group for SSM, EventBridge, SNS, Lambda, and Secrets Manager interface endpoints
       VpcId: !Ref VPC
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc-endpoint-sg
-
-  # ---------- Cross-referencing ingress/egress rules ----------
-  # Defined separately from the groups above to avoid circular references
-  # between LambdaSG, RDSSG, EC2SG, and VPCEndpointSG.
 
   RDSIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
@@ -202,7 +183,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda
+      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda, and Secrets Manager
 
   EndpointIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
@@ -232,7 +213,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda
+      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, Lambda, and Secrets Manager
 
   EC2EgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
@@ -254,7 +235,6 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
-  # ---------- VPC Endpoints (replace a NAT Gateway) ----------
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -294,9 +274,16 @@ Resources:
       SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
       PrivateDnsEnabled: true
 
-  # Required so the Authorizer Lambda (running in the private subnet) can
-  # reach the Lambda API to invoke Product/Order Lambda directly — without
-  # this, that invoke() call has no route out and hangs until timeout.
+  SecretsManagerInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref PrivateSubnet]
+      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      PrivateDnsEnabled: true
+
   LambdaInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -307,9 +294,6 @@ Resources:
       SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
       PrivateDnsEnabled: true
 
-# ─────────────────────────────────────────────
-# Outputs — consumed by data-stack, app-stack, monitoring-stack
-# ─────────────────────────────────────────────
 Outputs:
   VpcId:
     Value: !Ref VPC
