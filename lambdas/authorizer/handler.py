@@ -162,7 +162,8 @@ def role_allowed(role, method, path):
 
         return method in {
             "GET",
-            "POST"
+            "POST",
+            "PATCH"
         }
 
     return False
