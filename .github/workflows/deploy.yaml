@@ -2,12 +2,13 @@ name: Deploy CloudMart
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'cloudformation/**'
       - 'lambdas/**'
       - '.github/workflows/**'
-      - '.github/workflows/**'
+
   workflow_dispatch:
 
 permissions:
@@ -20,12 +21,13 @@ env:
 
 jobs:
 
-  # ═══════════════════════════════════════════
-  # 0. LINT — validates CloudFormation templates, gates every stack deploy
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 0. LINT
+  # ============================================================
   lint:
     name: Lint CloudFormation templates
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,16 +38,19 @@ jobs:
       - name: Install cfn-lint
         run: pip install cfn-lint --quiet
 
-      - name: Run cfn-lint on all templates
-        run: cfn-lint cloudformation/*.yaml --ignore-checks W1011
+      - name: Run cfn-lint
+        run: |
+          cfn-lint cloudformation/*.yaml --ignore-checks W1011
 
-  # ═══════════════════════════════════════════
+
+  # ============================================================
   # 1. NETWORK
-  # ═══════════════════════════════════════════
+  # ============================================================
   deploy-network:
     name: Deploy network-stack
     runs-on: ubuntu-latest
     needs: lint
+
     steps:
       - uses: actions/checkout@v4
 
@@ -55,23 +60,26 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy network-stack via Change Set
+      - name: Deploy network stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
-            --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --parameter-overrides \
+              Environment=prod \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
+
+  # ============================================================
   # 2. DATA
-  # ═══════════════════════════════════════════
+  # ============================================================
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
     needs: deploy-network
+
     steps:
       - uses: actions/checkout@v4
 
@@ -81,17 +89,44 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # --------------------------------------------------------
+      # DB credentials
+      # --------------------------------------------------------
       - name: Fetch DB credentials from SSM
         id: dbcreds
         run: |
-          USERNAME=$(aws ssm get-parameter --name /cloudmart/prod/db/username --with-decryption --query 'Parameter.Value' --output text)
-          PASSWORD=$(aws ssm get-parameter --name /cloudmart/prod/db/password --with-decryption --query 'Parameter.Value' --output text)
+          set -euo pipefail
+
+          USERNAME=$(aws ssm get-parameter \
+            --name /cloudmart/prod/db/username \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
+          PASSWORD=$(aws ssm get-parameter \
+            --name /cloudmart/prod/db/password \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
           echo "::add-mask::$USERNAME"
           echo "::add-mask::$PASSWORD"
+
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
 
-      - name: Create RBAC tokens in SSM Parameter Store if missing
+
+      # --------------------------------------------------------
+      # RBAC TOKEN CREATION
+      #
+      # GitHub Actions role requires:
+      #   ssm:GetParameter
+      #   ssm:PutParameter
+      #
+      # Lambda Authorizer only requires:
+      #   ssm:GetParameter
+      # --------------------------------------------------------
+      - name: Create RBAC tokens in SSM if missing
         run: |
           set -euo pipefail
 
@@ -99,18 +134,24 @@ jobs:
             local name="$1"
             local description="$2"
 
-            if aws ssm get-parameter --name "$name" >/dev/null 2>&1; then
+            if aws ssm get-parameter \
+              --name "$name" \
+              >/dev/null 2>&1
+            then
               echo "Already exists: $name"
-            else
-              TOKEN=$(openssl rand -hex 32)
-              aws ssm put-parameter \
-                --name "$name" \
-                --type SecureString \
-                --value "$TOKEN" \
-                --tier Standard \
-                --description "$description"
-              echo "Created: $name"
+              return 0
             fi
+
+            TOKEN=$(openssl rand -hex 32)
+
+            aws ssm put-parameter \
+              --name "$name" \
+              --type SecureString \
+              --value "$TOKEN" \
+              --tier Standard \
+              --description "$description"
+
+            echo "Created: $name"
           }
 
           create_parameter \
@@ -125,6 +166,10 @@ jobs:
             "/cloudmart/prod/auth/orders-token" \
             "CloudMart production orders/customer RBAC token"
 
+
+      # --------------------------------------------------------
+      # VERIFY PARAMETERS
+      # --------------------------------------------------------
       - name: Verify RBAC SSM parameters
         run: |
           set -euo pipefail
@@ -134,11 +179,18 @@ jobs:
             /cloudmart/prod/auth/products-token \
             /cloudmart/prod/auth/orders-token
           do
-            aws ssm get-parameter --name "$name" >/dev/null
+            aws ssm get-parameter \
+              --name "$name" \
+              >/dev/null
+
             echo "Verified: $name"
           done
 
-      - name: Deploy data-stack via Change Set
+
+      # --------------------------------------------------------
+      # DEPLOY DATA STACK
+      # --------------------------------------------------------
+      - name: Deploy data stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data-stack.yaml \
@@ -147,17 +199,19 @@ jobs:
               Environment=prod \
               DBMasterUsername='${{ steps.dbcreds.outputs.username }}' \
               DBMasterUserPassword='${{ steps.dbcreds.outputs.password }}' \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
+
+  # ============================================================
   # 3. IAM
-  # ═══════════════════════════════════════════
+  # ============================================================
   deploy-iam:
     name: Deploy iam-stack
     runs-on: ubuntu-latest
     needs: deploy-data
+
     steps:
       - uses: actions/checkout@v4
 
@@ -167,23 +221,26 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy iam-stack via Change Set
+      - name: Deploy IAM stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
-            --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --parameter-overrides \
+              Environment=prod \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
-  # 4. APPLICATION — package, upload, deploy, force code update
-  # ═══════════════════════════════════════════
+
+  # ============================================================
+  # 4. APPLICATION
+  # ============================================================
   deploy-app:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
     needs: deploy-iam
+
     steps:
       - uses: actions/checkout@v4
 
@@ -197,28 +254,76 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Package Lambdas with dependencies
+
+      # --------------------------------------------------------
+      # PACKAGE LAMBDAS
+      # --------------------------------------------------------
+      - name: Package Lambda functions
         run: |
-          for name in authorizer product order apply-schema; do
-            cd lambdas/$name
-            pip install pymysql -t . --quiet 2>/dev/null || true
-            zip -r "../../${name}.zip" . -x "*.pyc"
+          set -euo pipefail
+
+          for name in authorizer product order apply-schema
+          do
+            echo "Packaging $name"
+
+            cd "lambdas/$name"
+
+            pip install pymysql \
+              -t . \
+              --quiet
+
+            zip -r "../../${name}.zip" . \
+              -x "*.pyc" \
+              -x "__pycache__/*"
+
             cd ../..
           done
 
-      - name: Upload packages to S3
+
+      # --------------------------------------------------------
+      # GET ARTIFACT BUCKET
+      # --------------------------------------------------------
+      - name: Get artifacts bucket
         run: |
           ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-data \
             --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
             --output text)
-          echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
-          aws s3 cp authorizer.zip "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
-          aws s3 cp product.zip "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
-          aws s3 cp order.zip "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
-          aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
-      - name: Deploy app-stack via Change Set
+          echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
+
+          echo "Artifacts bucket:"
+          echo "$ARTIFACTS_BUCKET"
+
+
+      # --------------------------------------------------------
+      # UPLOAD LAMBDA PACKAGES
+      # --------------------------------------------------------
+      - name: Upload Lambda packages
+        run: |
+          set -euo pipefail
+
+          aws s3 cp \
+            authorizer.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
+
+          aws s3 cp \
+            product.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
+
+          aws s3 cp \
+            order.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
+
+          aws s3 cp \
+            apply-schema.zip \
+            "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
+
+
+      # --------------------------------------------------------
+      # DEPLOY APPLICATION STACK
+      # --------------------------------------------------------
+      - name: Deploy application stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/app-stack.yaml \
@@ -226,29 +331,45 @@ jobs:
             --parameter-overrides \
               Environment=prod \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      # CloudFormation only updates a Lambda's code when the S3Key string
-      # itself changes. Since it stays the same every deploy, force the
-      # update explicitly here so code changes always actually take effect.
+
+      # --------------------------------------------------------
+      # FORCE LAMBDA CODE UPDATE
+      # --------------------------------------------------------
       - name: Force Lambda code updates
         run: |
-          for fn in authorizer product order apply-schema; do
+          set -euo pipefail
+
+          for fn in \
+            authorizer \
+            product \
+            order \
+            apply-schema
+          do
+            echo "Updating $fn"
+
             aws lambda update-function-code \
-              --function-name cloudmart-prod-$fn \
-              --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/$fn.zip --publish
-            aws lambda wait function-updated --function-name cloudmart-prod-$fn
+              --function-name "cloudmart-prod-$fn" \
+              --s3-bucket "$ARTIFACTS_BUCKET" \
+              --s3-key "lambdas/$fn.zip" \
+              --publish
+
+            aws lambda wait function-updated \
+              --function-name "cloudmart-prod-$fn"
           done
 
-  # ═══════════════════════════════════════════
-  # 5. APPLY SCHEMA
-  # ═══════════════════════════════════════════
+
+  # ============================================================
+  # 5. APPLY DATABASE SCHEMA
+  # ============================================================
   apply-schema:
     name: Apply RDS schema and sample data
     runs-on: ubuntu-latest
     needs: deploy-app
+
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -257,25 +378,34 @@ jobs:
 
       - name: Invoke apply-schema Lambda
         run: |
+          set -euo pipefail
+
           aws lambda invoke \
             --function-name cloudmart-prod-apply-schema \
             --payload '{}' \
             response.json
+
           cat response.json
 
-  # ═══════════════════════════════════════════
-  # 6. VERIFY AUTH — 401 / 401 / 200 / 403
-  # ═══════════════════════════════════════════
+
+  # ============================================================
+  # 6. VERIFY AUTH + RBAC
+  # ============================================================
   verify-auth:
-    name: Verify 401 / 401 / 200 / 403 auth flow
+    name: Verify 401 / 401 / 200 / 403 RBAC
     runs-on: ubuntu-latest
     needs: apply-schema
+
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+
+      # --------------------------------------------------------
+      # FUNCTION URL
+      # --------------------------------------------------------
       - name: Get Authorizer Function URL
         id: geturl
         run: |
@@ -283,36 +413,63 @@ jobs:
             --stack-name cloudmart-app \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerFunctionUrl'].OutputValue" \
             --output text)
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-      - name: Verify RBAC SSM parameters exist
+          echo "Authorizer URL obtained."
+
+
+      # --------------------------------------------------------
+      # CHECK PARAMETERS
+      # --------------------------------------------------------
+      - name: Verify RBAC parameters
         run: |
           set -euo pipefail
+
           for name in \
             /cloudmart/prod/auth/admin-token \
             /cloudmart/prod/auth/products-token \
             /cloudmart/prod/auth/orders-token
           do
-            aws ssm get-parameter --name "$name" >/dev/null
+            aws ssm get-parameter \
+              --name "$name" \
+              >/dev/null
+
             echo "Found: $name"
           done
 
+
+      # --------------------------------------------------------
+      # NO TOKEN = 401
+      # --------------------------------------------------------
       - name: No token -> expect 401
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "No-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
+          echo "No-token status: $STATUS"
+
+          [ "$STATUS" = "401" ]
+
+
+      # --------------------------------------------------------
+      # WRONG TOKEN = 401
+      # --------------------------------------------------------
       - name: Wrong token -> expect 401
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer wrong-token-value" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Wrong-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      - name: Fetch admin token from SSM
+          echo "Wrong-token status: $STATUS"
+
+          [ "$STATUS" = "401" ]
+
+
+      # --------------------------------------------------------
+      # ADMIN TOKEN
+      # --------------------------------------------------------
+      - name: Fetch admin token
         id: admintoken
         run: |
           TOKEN=$(aws ssm get-parameter \
@@ -320,8 +477,10 @@ jobs:
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
+
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
 
       - name: Admin token -> expect 200
         env:
@@ -330,10 +489,16 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $REAL_TOKEN" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Admin-token status: $STATUS"
-          [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      - name: Fetch orders token from SSM
+          echo "Admin-token status: $STATUS"
+
+          [ "$STATUS" = "200" ]
+
+
+      # --------------------------------------------------------
+      # ORDERS TOKEN CANNOT CREATE PRODUCTS
+      # --------------------------------------------------------
+      - name: Fetch orders token
         id: orderstoken
         run: |
           TOKEN=$(aws ssm get-parameter \
@@ -341,10 +506,12 @@ jobs:
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
+
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Orders token cannot create products -> expect 403
+
+      - name: Orders token POST /products -> expect 403
         env:
           ORDERS_TOKEN: ${{ steps.orderstoken.outputs.token }}
         run: |
@@ -354,9 +521,15 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{}' \
             "${{ steps.geturl.outputs.url }}products")
-          echo "Orders-token POST /products status: $STATUS"
-          [ "$STATUS" = "403" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
+          echo "Orders-token POST /products status: $STATUS"
+
+          [ "$STATUS" = "403" ]
+
+
+      # --------------------------------------------------------
+      # SUCCESS
+      # --------------------------------------------------------
       - name: RBAC verification complete
         run: |
           echo "========================================"
