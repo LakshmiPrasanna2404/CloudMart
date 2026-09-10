@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 
 import boto3
 import pymysql
@@ -29,10 +30,6 @@ events_client = boto3.client(
     config=aws_config
 )
 
-cloudwatch = boto3.client(
-    "cloudwatch",
-    config=aws_config
-)
 
 
 # ============================================================
@@ -278,41 +275,53 @@ def publish_inventory_event(
 
 
 # ============================================================
-# CLOUDWATCH METRIC
+# CUSTOM METRIC (CLOUDWATCH EMBEDDED METRIC FORMAT)
 # ============================================================
 
 def publish_metric(
     metric_name,
     dimensions=None
 ):
+    """
+    Emit a CloudWatch custom metric through Lambda's standard logs.
+
+    This uses Embedded Metric Format (EMF), so the Lambda does not make
+    a network call to the CloudWatch Monitoring API. That is important
+    because this function runs inside the existing private subnet and
+    must not depend on an additional VPC endpoint.
+    """
     try:
+        dimensions = dimensions or {}
+        dimension_names = list(dimensions.keys())
 
-        cloudwatch.put_metric_data(
-            Namespace="cloudmart",
-            MetricData=[
-                {
-                    "MetricName": metric_name,
-                    "Value": 1,
-                    "Unit": "Count",
-                    "Dimensions": [
-                        {
-                            "Name": key,
-                            "Value": value
-                        }
-                        for key, value in (
-                            dimensions or {}
-                        ).items()
-                    ]
-                }
-            ]
-        )
+        metric_document = {
+            "_aws": {
+                "Timestamp": int(time.time() * 1000),
+                "CloudWatchMetrics": [
+                    {
+                        "Namespace": "cloudmart",
+                        "Dimensions": [dimension_names] if dimension_names else [[]],
+                        "Metrics": [
+                            {
+                                "Name": metric_name,
+                                "Unit": "Count"
+                            }
+                        ]
+                    }
+                ]
+            },
+            metric_name: 1,
+            **dimensions
+        }
 
-    except Exception as e:
+        print(json.dumps(metric_document, default=str))
 
+    except Exception as exc:
+        # Metrics must never break a successful business operation.
         log(
             "ERROR",
-            "Failed to publish metric",
-            error=str(e),
+            "Failed to emit metric",
+            error=str(exc),
             metric=metric_name
         )
 
@@ -1242,7 +1251,7 @@ def lambda_handler(event, context):
     method = http.get(
         "method",
         ""
-    ).upper()
+    )
 
     path = http.get(
         "path",
@@ -1259,12 +1268,15 @@ def lambda_handler(event, context):
     # --------------------------------------------------------
 
     try:
+
         body = (
             json.loads(event["body"])
             if event.get("body")
             else {}
         )
+
     except json.JSONDecodeError:
+
         return response(
             400,
             {
@@ -1278,14 +1290,22 @@ def lambda_handler(event, context):
     # --------------------------------------------------------
 
     role = (
-        event
-        .get("requestContext", {})
+        event.get("requestContext", {})
         .get("authorizer", {})
-        .get("role", "orders")
+        .get("role")
     )
 
+    if role not in {"admin", "orders"}:
+        return response(
+            403,
+            {
+                "error": "forbidden",
+                "message": "Valid order authorization is required"
+            }
+        )
+
     # --------------------------------------------------------
-    # Match /orders/{id}
+    # Match order routes
     # --------------------------------------------------------
 
     id_match = re.match(
@@ -1301,11 +1321,11 @@ def lambda_handler(event, context):
         method == "POST"
         and path == "/orders"
     ):
+
         return place_order(body)
 
     # --------------------------------------------------------
-    # PATCH /orders/{id}
-    # Cancel order
+    # PATCH /orders/{id} - cancel order
     # --------------------------------------------------------
 
     elif (
@@ -1313,14 +1333,10 @@ def lambda_handler(event, context):
         and id_match
     ):
 
-        order_id = int(
-            id_match.group(1)
-        )
-
+        order_id = int(id_match.group(1))
         requested_status = body.get("status")
         customer_id = body.get("customer_id")
 
-        # Only cancellation is supported by PATCH.
         if requested_status != "CANCELLED":
             return response(
                 400,
@@ -1330,11 +1346,7 @@ def lambda_handler(event, context):
                 }
             )
 
-        # Customers/orders role must provide the customer ID so
-        # cancel_order() can verify ownership against the database.
-        # Admin can cancel any order and does not need customer_id.
         if role != "admin":
-
             if customer_id is None:
                 return response(
                     400,
@@ -1356,7 +1368,6 @@ def lambda_handler(event, context):
                 )
 
         elif customer_id is not None:
-
             try:
                 customer_id = int(customer_id)
             except (ValueError, TypeError):
@@ -1382,6 +1393,7 @@ def lambda_handler(event, context):
         method == "GET"
         and id_match
     ):
+
         return get_order(
             int(id_match.group(1))
         )
@@ -1397,10 +1409,13 @@ def lambda_handler(event, context):
     ):
 
         try:
+
             customer_id = int(
                 query_params["customerId"]
             )
+
         except (ValueError, TypeError):
+
             return response(
                 400,
                 {
@@ -1418,6 +1433,7 @@ def lambda_handler(event, context):
     # --------------------------------------------------------
 
     else:
+
         return response(
             404,
             {
