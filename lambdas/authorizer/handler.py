@@ -11,10 +11,16 @@ import pymysql
 from botocore.config import Config
 
 
+# ============================================================
+# AWS CLIENT CONFIGURATION
+# ============================================================
+
 aws_config = Config(
     connect_timeout=2,
     read_timeout=3,
-    retries={"max_attempts": 1}
+    retries={
+        "max_attempts": 1
+    }
 )
 
 
@@ -30,29 +36,52 @@ lambda_client = boto3.client(
 )
 
 
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
+
+ENVIRONMENT = os.environ.get(
+    "ENVIRONMENT",
+    "prod"
+)
+
 
 ADMIN_TOKEN_PARAMETER_NAME = os.environ.get(
     "ADMIN_TOKEN_PARAMETER_NAME",
     ""
 )
 
+
 PRODUCTS_TOKEN_PARAMETER_NAME = os.environ.get(
     "PRODUCTS_TOKEN_PARAMETER_NAME",
     ""
 )
 
+
 PRODUCT_LAMBDA_NAME = os.environ.get(
     "PRODUCT_LAMBDA_NAME"
 )
+
 
 ORDER_LAMBDA_NAME = os.environ.get(
     "ORDER_LAMBDA_NAME"
 )
 
-DB_HOST = os.environ.get("DB_HOST")
-DB_NAME = os.environ.get("DB_NAME", "cloudmart")
 
+DB_HOST = os.environ.get(
+    "DB_HOST"
+)
+
+
+DB_NAME = os.environ.get(
+    "DB_NAME",
+    "cloudmart"
+)
+
+
+# ============================================================
+# CACHE
+# ============================================================
 
 CACHE_TTL_SECONDS = 300
 
@@ -77,24 +106,72 @@ _db_credentials_cache = {
 }
 
 
+# ============================================================
+# LOGGING
+# ============================================================
+
 def log(level, message, **extra):
 
     print(
-        json.dumps(
-            {
-                "level": level,
-                "message": message,
-                **extra
-            }
-        )
+        json.dumps({
+            "level": level,
+            "message": message,
+            **extra
+        })
     )
 
 
 # ============================================================
-# SSM
+# HTTP RESPONSE
 # ============================================================
 
-def get_ssm_token(role, parameter_name):
+def response(status_code, body):
+
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": json.dumps(
+            body,
+            default=str
+        )
+    }
+
+
+def unauthorized():
+
+    return response(
+        401,
+        {
+            "error": "unauthorized",
+            "message": "Missing or invalid credential"
+        }
+    )
+
+
+def forbidden():
+
+    return response(
+        403,
+        {
+            "error": "forbidden",
+            "message": (
+                "Credential does not have "
+                "permission for this operation"
+            )
+        }
+    )
+
+
+# ============================================================
+# SSM APPLICATION CREDENTIALS
+# ============================================================
+
+def get_ssm_token(
+    role,
+    parameter_name
+):
 
     now = time.time()
 
@@ -102,13 +179,18 @@ def get_ssm_token(role, parameter_name):
 
     if (
         cached["value"] is not None
-        and now - cached["fetched_at"] < CACHE_TTL_SECONDS
+        and (
+            now - cached["fetched_at"]
+            < CACHE_TTL_SECONDS
+        )
     ):
+
         return cached["value"]
 
     if not parameter_name:
+
         raise RuntimeError(
-            f"SSM parameter is not configured for role: {role}"
+            f"SSM parameter not configured for {role}"
         )
 
     result = ssm.get_parameter(
@@ -116,21 +198,25 @@ def get_ssm_token(role, parameter_name):
         WithDecryption=True
     )
 
-    value = result["Parameter"]["Value"]
+    value = result[
+        "Parameter"
+    ]["Value"]
 
     if not value:
+
         raise RuntimeError(
-            f"SSM parameter is empty for role: {role}"
+            f"SSM parameter is empty for {role}"
         )
 
     cached["value"] = value
+
     cached["fetched_at"] = now
 
     return value
 
 
 # ============================================================
-# DATABASE
+# DATABASE CREDENTIALS
 # ============================================================
 
 def get_db_credentials():
@@ -140,9 +226,13 @@ def get_db_credentials():
     if (
         _db_credentials_cache["username"]
         and _db_credentials_cache["password"]
-        and now - _db_credentials_cache["fetched_at"]
-        < CACHE_TTL_SECONDS
+        and (
+            now
+            - _db_credentials_cache["fetched_at"]
+            < CACHE_TTL_SECONDS
+        )
     ):
+
         return (
             _db_credentials_cache["username"],
             _db_credentials_cache["password"]
@@ -165,6 +255,10 @@ def get_db_credentials():
     return username, password
 
 
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
 def get_db_connection():
 
     username, password = get_db_credentials()
@@ -183,44 +277,7 @@ def get_db_connection():
 
 
 # ============================================================
-# HTTP RESPONSES
-# ============================================================
-
-def response(status_code, body):
-
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json"
-        },
-        "body": json.dumps(body)
-    }
-
-
-def unauthorized():
-
-    return response(
-        401,
-        {
-            "error": "unauthorized",
-            "message": "Missing or invalid credential"
-        }
-    )
-
-
-def forbidden():
-
-    return response(
-        403,
-        {
-            "error": "forbidden",
-            "message": "Credential does not have permission"
-        }
-    )
-
-
-# ============================================================
-# REQUEST PARSING
+# REQUEST DETAILS
 # ============================================================
 
 def get_request_details(event):
@@ -251,6 +308,10 @@ def get_request_details(event):
     return method, path
 
 
+# ============================================================
+# AUTHORIZATION HEADER
+# ============================================================
+
 def extract_bearer_credential(event):
 
     headers = event.get(
@@ -265,75 +326,82 @@ def extract_bearer_credential(event):
     )
 
     if not auth_header:
+
         return None
 
-    if not auth_header.lower().startswith("bearer "):
+    if not auth_header.lower().startswith(
+        "bearer "
+    ):
+
         return None
 
     credential = auth_header[7:].strip()
 
     if not credential:
+
         return None
 
     return credential
 
+
+# ============================================================
+# BODY
+# ============================================================
 
 def parse_body(event):
 
     body = event.get("body")
 
     if not body:
+
         return {}
 
     if isinstance(body, dict):
+
         return body
 
     try:
+
         return json.loads(body)
 
     except json.JSONDecodeError:
+
         return None
 
 
 # ============================================================
-# ADMIN / PRODUCTS AUTHENTICATION
+# APPLICATION TOKEN AUTHENTICATION
 # ============================================================
 
-def authenticate_application_token(incoming):
+def authenticate_application_token(
+    incoming_credential
+):
 
-    try:
+    admin_token = get_ssm_token(
+        "admin",
+        ADMIN_TOKEN_PARAMETER_NAME
+    )
 
-        admin_token = get_ssm_token(
-            "admin",
-            ADMIN_TOKEN_PARAMETER_NAME
-        )
+    if incoming_credential == admin_token:
 
-        if incoming == admin_token:
-            return {
-                "role": "admin",
-                "customer_id": None
-            }
+        return {
+            "role": "admin",
+            "customer_id": None
+        }
 
-        products_token = get_ssm_token(
-            "products",
-            PRODUCTS_TOKEN_PARAMETER_NAME
-        )
 
-        if incoming == products_token:
-            return {
-                "role": "products",
-                "customer_id": None
-            }
+    products_token = get_ssm_token(
+        "products",
+        PRODUCTS_TOKEN_PARAMETER_NAME
+    )
 
-    except Exception as exc:
+    if incoming_credential == products_token:
 
-        log(
-            "ERROR",
-            "Application authentication failed",
-            error=str(exc)
-        )
+        return {
+            "role": "products",
+            "customer_id": None
+        }
 
-        raise
 
     return None
 
@@ -342,14 +410,23 @@ def authenticate_application_token(incoming):
 # CUSTOMER AUTHENTICATION
 # ============================================================
 
-def authenticate_customer_credential(credential):
+def authenticate_customer(
+    credential
+):
 
     if not credential:
+
         return None
 
-    lookup = hashlib.sha256(
+
+    # --------------------------------------------------------
+    # SHA-256 lookup fingerprint.
+    # --------------------------------------------------------
+
+    password_lookup = hashlib.sha256(
         credential.encode("utf-8")
     ).hexdigest()
+
 
     conn = None
 
@@ -372,47 +449,75 @@ def authenticate_customer_credential(credential):
                   AND revoked_at IS NULL
                 LIMIT 1
                 """,
-                (lookup,)
+                (password_lookup,)
             )
 
             login = cur.fetchone()
 
+
             if not login:
+
                 return None
 
-            stored_hash = login["password_hash"]
 
-            if isinstance(stored_hash, str):
-                stored_hash = stored_hash.encode("utf-8")
+            stored_hash = login[
+                "password_hash"
+            ]
+
+
+            if isinstance(
+                stored_hash,
+                str
+            ):
+
+                stored_hash = stored_hash.encode(
+                    "utf-8"
+                )
+
+
+            # ------------------------------------------------
+            # Actual password verification.
+            # ------------------------------------------------
 
             if not bcrypt.checkpw(
                 credential.encode("utf-8"),
                 stored_hash
             ):
+
                 return None
+
+
+            # ------------------------------------------------
+            # Update login timestamp.
+            # ------------------------------------------------
 
             cur.execute(
                 """
                 UPDATE login_access
-                SET last_login_at = CURRENT_TIMESTAMP
+                SET last_login_at =
+                    CURRENT_TIMESTAMP
                 WHERE login_id = %s
                 """,
                 (login["login_id"],)
             )
 
+
             return {
                 "role": "customer",
-                "customer_id": int(login["customer_id"])
+                "customer_id": int(
+                    login["customer_id"]
+                )
             }
 
     finally:
 
         if conn:
+
             conn.close()
 
 
 # ============================================================
-# ROUTING / RBAC
+# ROUTE HELPERS
 # ============================================================
 
 def is_product_route(path):
@@ -423,24 +528,35 @@ def is_product_route(path):
     )
 
 
-def is_order_collection_route(path):
+def is_orders_collection(path):
 
     return path == "/orders"
 
 
 def is_order_id_route(path):
 
-    return re.match(
-        r"^/orders/\d+$",
-        path
-    ) is not None
+    return (
+        re.match(
+            r"^/orders/\d+$",
+            path
+        )
+        is not None
+    )
 
 
-def role_allowed(role, method, path):
+# ============================================================
+# RBAC
+# ============================================================
 
-    # --------------------------------------------------------
+def role_allowed(
+    role,
+    method,
+    path
+):
+
+    # ========================================================
     # ADMIN
-    # --------------------------------------------------------
+    # ========================================================
 
     if role == "admin":
 
@@ -453,7 +569,7 @@ def role_allowed(role, method, path):
                 "DELETE"
             }
 
-        if is_order_collection_route(path):
+        if is_orders_collection(path):
 
             return method in {
                 "GET",
@@ -469,13 +585,15 @@ def role_allowed(role, method, path):
 
         return False
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # PRODUCTS
-    # --------------------------------------------------------
+    # ========================================================
 
     if role == "products":
 
         if not is_product_route(path):
+
             return False
 
         return method in {
@@ -485,9 +603,10 @@ def role_allowed(role, method, path):
             "DELETE"
         }
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # CUSTOMER
-    # --------------------------------------------------------
+    # ========================================================
 
     if role == "customer":
 
@@ -496,15 +615,17 @@ def role_allowed(role, method, path):
 
             return method == "GET"
 
+
         # Customer can create/list orders.
-        if is_order_collection_route(path):
+        if is_orders_collection(path):
 
             return method in {
                 "GET",
                 "POST"
             }
 
-        # Customer can view/cancel a specific order.
+
+        # Customer can view/cancel own orders.
         if is_order_id_route(path):
 
             return method in {
@@ -512,10 +633,16 @@ def role_allowed(role, method, path):
                 "PATCH"
             }
 
+
         return False
+
 
     return False
 
+
+# ============================================================
+# TARGET LAMBDA
+# ============================================================
 
 def get_target_lambda(path):
 
@@ -524,7 +651,7 @@ def get_target_lambda(path):
         return PRODUCT_LAMBDA_NAME
 
     if (
-        is_order_collection_route(path)
+        is_orders_collection(path)
         or is_order_id_route(path)
     ):
 
@@ -534,18 +661,25 @@ def get_target_lambda(path):
 
 
 # ============================================================
-# DOWNSTREAM INVOCATION
+# DOWNSTREAM LAMBDA
 # ============================================================
 
-def invoke_lambda(function_name, event):
+def invoke_lambda(
+    function_name,
+    event
+):
 
     result = lambda_client.invoke(
         FunctionName=function_name,
         InvocationType="RequestResponse",
-        Payload=json.dumps(event).encode("utf-8")
+        Payload=json.dumps(
+            event
+        ).encode("utf-8")
     )
 
-    payload = result.get("Payload")
+    payload = result.get(
+        "Payload"
+    )
 
     if not payload:
 
@@ -553,11 +687,15 @@ def invoke_lambda(function_name, event):
             500,
             {
                 "error": "internal_error",
-                "message": "Empty downstream Lambda response"
+                "message": (
+                    "Empty Lambda response"
+                )
             }
         )
 
-    raw = payload.read().decode("utf-8")
+    raw = payload.read().decode(
+        "utf-8"
+    )
 
     if not raw:
 
@@ -565,7 +703,9 @@ def invoke_lambda(function_name, event):
             500,
             {
                 "error": "internal_error",
-                "message": "Empty downstream Lambda payload"
+                "message": (
+                    "Empty Lambda payload"
+                )
             }
         )
 
@@ -573,14 +713,258 @@ def invoke_lambda(function_name, event):
 
 
 # ============================================================
-# MAIN HANDLER
+# CUSTOMER REGISTRATION
 # ============================================================
 
-def lambda_handler(event, context):
+def register_customer(body):
+
+    if not isinstance(
+        body,
+        dict
+    ):
+
+        return response(
+            400,
+            {
+                "error": "validation_error",
+                "message": (
+                    "Request body must be JSON"
+                )
+            }
+        )
+
+
+    name = str(
+        body.get("name", "")
+    ).strip()
+
+
+    email = str(
+        body.get("email", "")
+    ).strip().lower()
+
+
+    password = str(
+        body.get("password", "")
+    )
+
+
+    if not name:
+
+        return response(
+            400,
+            {
+                "error": "validation_error",
+                "message": "name is required"
+            }
+        )
+
+
+    if not email:
+
+        return response(
+            400,
+            {
+                "error": "validation_error",
+                "message": "email is required"
+            }
+        )
+
+
+    if len(password) < 8:
+
+        return response(
+            400,
+            {
+                "error": "validation_error",
+                "message": (
+                    "password must contain at least "
+                    "8 characters"
+                )
+            }
+        )
+
+
+    # --------------------------------------------------------
+    # Lookup fingerprint.
+    # --------------------------------------------------------
+
+    password_lookup = hashlib.sha256(
+        password.encode("utf-8")
+    ).hexdigest()
+
+
+    # --------------------------------------------------------
+    # bcrypt hash.
+    # --------------------------------------------------------
+
+    password_hash = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+
+    conn = None
 
     try:
 
-        method, path = get_request_details(event)
+        conn = get_db_connection()
+
+        conn.begin()
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT customer_id
+                FROM customers
+                WHERE email = %s
+                LIMIT 1
+                """,
+                (email,)
+            )
+
+            existing = cur.fetchone()
+
+
+            if existing:
+
+                conn.rollback()
+
+                return response(
+                    409,
+                    {
+                        "error": "customer_exists",
+                        "message": (
+                            "Customer with this "
+                            "email already exists"
+                        )
+                    }
+                )
+
+
+            cur.execute(
+                """
+                INSERT INTO customers
+                    (
+                        name,
+                        email
+                    )
+                VALUES
+                    (
+                        %s,
+                        %s
+                    )
+                """,
+                (
+                    name,
+                    email
+                )
+            )
+
+
+            customer_id = cur.lastrowid
+
+
+            cur.execute(
+                """
+                INSERT INTO login_access
+                    (
+                        customer_id,
+                        password_lookup,
+                        password_hash
+                    )
+                VALUES
+                    (
+                        %s,
+                        %s,
+                        %s
+                    )
+                """,
+                (
+                    customer_id,
+                    password_lookup,
+                    password_hash
+                )
+            )
+
+
+        conn.commit()
+
+
+        return response(
+            201,
+            {
+                "message": (
+                    "Customer registered successfully"
+                ),
+                "customer_id": customer_id
+            }
+        )
+
+
+    except pymysql.IntegrityError:
+
+        if conn:
+
+            conn.rollback()
+
+        return response(
+            409,
+            {
+                "error": "registration_failed",
+                "message": (
+                    "Customer registration failed"
+                )
+            }
+        )
+
+
+    except Exception as exc:
+
+        if conn:
+
+            conn.rollback()
+
+        log(
+            "ERROR",
+            "Customer registration failed",
+            error=str(exc)
+        )
+
+        return response(
+            500,
+            {
+                "error": "internal_error",
+                "message": (
+                    "Customer registration failed"
+                )
+            }
+        )
+
+
+    finally:
+
+        if conn:
+
+            conn.close()
+
+
+# ============================================================
+# MAIN HANDLER
+# ============================================================
+
+def lambda_handler(
+    event,
+    context
+):
+
+    try:
+
+        method, path = get_request_details(
+            event
+        )
+
 
         log(
             "INFO",
@@ -589,50 +973,87 @@ def lambda_handler(event, context):
             path=path
         )
 
-        credential = extract_bearer_credential(event)
+
+        # ====================================================
+        # PUBLIC CUSTOMER REGISTRATION
+        # ====================================================
+
+        if (
+            method == "POST"
+            and path == "/register"
+        ):
+
+            body = parse_body(event)
+
+            if body is None:
+
+                return response(
+                    400,
+                    {
+                        "error": "validation_error",
+                        "message": "Invalid JSON body"
+                    }
+                )
+
+            return register_customer(
+                body
+            )
+
+
+        # ====================================================
+        # AUTHENTICATION
+        # ====================================================
+
+        credential = extract_bearer_credential(
+            event
+        )
+
 
         if not credential:
 
-            log(
-                "WARN",
-                "Missing customer/application credential"
-            )
-
             return unauthorized()
 
+
         # ----------------------------------------------------
-        # First check admin/products application credentials.
+        # Admin / Products
         # ----------------------------------------------------
 
         identity = authenticate_application_token(
             credential
         )
 
+
         # ----------------------------------------------------
-        # If not admin/products, check customer credential.
+        # Customer
         # ----------------------------------------------------
 
         if identity is None:
 
-            identity = authenticate_customer_credential(
+            identity = authenticate_customer(
                 credential
             )
 
+
         # ----------------------------------------------------
-        # No valid identity.
+        # Invalid credential
         # ----------------------------------------------------
 
         if identity is None:
 
             log(
                 "WARN",
-                "Invalid authentication credential"
+                "Authentication failed"
             )
 
             return unauthorized()
 
+
         role = identity["role"]
-        customer_id = identity["customer_id"]
+
+        customer_id = identity[
+            "customer_id"
+        ]
+
 
         log(
             "INFO",
@@ -641,9 +1062,10 @@ def lambda_handler(event, context):
             customer_id=customer_id
         )
 
-        # ----------------------------------------------------
-        # RBAC
-        # ----------------------------------------------------
+
+        # ====================================================
+        # AUTHORIZATION
+        # ====================================================
 
         if not role_allowed(
             role,
@@ -661,11 +1083,15 @@ def lambda_handler(event, context):
 
             return forbidden()
 
-        # ----------------------------------------------------
-        # Determine target Lambda.
-        # ----------------------------------------------------
 
-        target_lambda = get_target_lambda(path)
+        # ====================================================
+        # ROUTING
+        # ====================================================
+
+        target_lambda = get_target_lambda(
+            path
+        )
+
 
         if not target_lambda:
 
@@ -677,32 +1103,30 @@ def lambda_handler(event, context):
                 }
             )
 
-        # ----------------------------------------------------
-        # Pass authenticated identity downstream.
-        # ----------------------------------------------------
+
+        # ====================================================
+        # PASS IDENTITY DOWNSTREAM
+        # ====================================================
 
         request_context = event.setdefault(
             "requestContext",
             {}
         )
 
-        request_context["authorizer"] = {
+
+        request_context[
+            "authorizer"
+        ] = {
             "role": role,
             "customer_id": customer_id
         }
 
-        log(
-            "INFO",
-            "Invoking downstream Lambda",
-            target=target_lambda,
-            role=role,
-            customer_id=customer_id
-        )
 
         return invoke_lambda(
             target_lambda,
             event
         )
+
 
     except Exception as exc:
 
@@ -716,6 +1140,8 @@ def lambda_handler(event, context):
             500,
             {
                 "error": "internal_error",
-                "message": "Authentication service error"
+                "message": (
+                    "Authentication service error"
+                )
             }
         )
