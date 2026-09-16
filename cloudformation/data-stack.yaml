@@ -7,42 +7,32 @@ Description: >
   The Lambda deployment artifacts bucket already exists and is reused.
 
 Parameters:
-
   Environment:
     Type: String
     Default: prod
     AllowedValues: [dev, prod]
-
   DBInstanceClass:
     Type: String
     Default: db.t3.micro
     Description: Free Tier eligible instance class
-
   DBAllocatedStorage:
     Type: Number
     Default: 20
     Description: Storage in GB, Free Tier covers up to 20GB
-
   DBMasterUsername:
     Type: String
     NoEcho: true
     Description: Passed in at deploy time from SSM — never hardcoded
-
   DBMasterUserPassword:
     Type: String
     NoEcho: true
     Description: Passed in at deploy time from SSM — never hardcoded
-
   ArtifactsBucketName:
     Type: String
     Default: cloudmart-artifacts-393476285814
     Description: Existing S3 bucket used for Lambda deployment artifacts
 
-
 Resources:
-
-  # ---------- RDS Subnet Group ----------
-  # Must span two AZs even though the instance itself runs in one.
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -54,10 +44,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db-subnet-group
 
-
-  # ---------- RDS MySQL Instance ----------
-  # Username/password are passed in as parameters, fetched from SSM by the
-  # GitHub Actions workflow before deploy.
   RDSInstance:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
@@ -81,8 +67,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db
 
-
-  # ---------- S3 Bucket: Daily reports ----------
   ReportsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -100,24 +84,19 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-reports
 
-
 Outputs:
-
   RDSEndpoint:
     Value: !GetAtt RDSInstance.Endpoint.Address
     Export:
       Name: !Sub cloudmart-${Environment}-rds-endpoint
-
   RDSPort:
     Value: !GetAtt RDSInstance.Endpoint.Port
     Export:
       Name: !Sub cloudmart-${Environment}-rds-port
-
   ArtifactsBucketName:
     Value: !Ref ArtifactsBucketName
     Export:
       Name: !Sub cloudmart-${Environment}-artifacts-bucket-name
-
   ReportsBucketName:
     Value: !Ref ReportsBucket
     Export:
