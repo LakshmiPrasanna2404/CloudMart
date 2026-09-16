@@ -119,6 +119,30 @@ jobs:
 
 
       # --------------------------------------------------------
+      # REMOVE OBSOLETE CUSTOMER/ORDERS TOKEN
+      # --------------------------------------------------------
+      # Customer credentials are created through POST /register and
+      # stored in the RDS login_access table.
+      # This removes the old SSM parameter automatically.
+      # --------------------------------------------------------
+
+      - name: Remove obsolete orders-token parameter
+        run: |
+          set -euo pipefail
+
+          if aws ssm get-parameter \
+            --name /cloudmart/prod/auth/orders-token \
+            >/dev/null 2>&1
+          then
+            aws ssm delete-parameter \
+              --name /cloudmart/prod/auth/orders-token
+            echo "Removed obsolete orders-token parameter."
+          else
+            echo "Obsolete orders-token parameter does not exist."
+          fi
+
+
+      # --------------------------------------------------------
       # DB CREDENTIALS
       # --------------------------------------------------------
 
