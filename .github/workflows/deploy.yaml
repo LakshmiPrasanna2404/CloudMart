@@ -127,7 +127,7 @@ jobs:
 
           for name in \
             /cloudmart/prod/auth/admin-token \
-            /cloudmart/prod/auth/products-token \
+            /cloudmart/prod/auth/products-token 
            do
             aws ssm get-parameter --name "$name" >/dev/null
             echo "Verified: $name"
