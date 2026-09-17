@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  CloudMart monitoring stack. Creates CloudWatch alarms for the
+  Authorizer, Product, Order, and Report Lambda functions, plus RDS
+  CPU and storage alarms. Notifications are sent through an SNS topic.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - prod
+
+  AlertEmail:
+    Type: String
+    Description: Email address that receives CloudWatch alarm notifications.
+    AllowedPattern: ^[^\s@]+@[^\s@]+\.[^\s@]+$
+
+  DBInstanceIdentifier:
+    Type: String
+    Default: cloudmart-prod-db
+
+  AlarmEvaluationPeriods:
+    Type: Number
+    Default: 2
+    MinValue: 1
+
+  LambdaErrorThreshold:
+    Type: Number
+    Default: 1
+    MinValue: 1
+
+Resources:
+  MonitoringTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub cloudmart-${Environment}-monitoring-alerts
+      DisplayName: CloudMart Monitoring Alerts
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-monitoring-alerts
+
+  MonitoringEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MonitoringTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  AuthorizerLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-authorizer-errors
+      AlarmDescription: Authorizer Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-authorizer
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  ProductLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-product-errors
+      AlarmDescription: Product Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-product
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  OrderLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-order-errors
+      AlarmDescription: Order Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-order
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  ReportLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-report-errors
+      AlarmDescription: Report Generate Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-report-generate
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  AuthorizerDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-authorizer-duration
+      AlarmDescription: Authorizer Lambda duration is high.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-authorizer
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  RDSCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-rds-high-cpu
+      AlarmDescription: RDS CPU utilization is high.
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DBInstanceIdentifier
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  RDSFreeStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-rds-low-storage
+      AlarmDescription: RDS free storage is low.
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DBInstanceIdentifier
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5368709120
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+Outputs:
+  MonitoringTopicArn:
+    Description: SNS topic ARN used by CloudWatch alarms.
+    Value: !Ref MonitoringTopic
+    Export:
+      Name: !Sub cloudmart-${Environment}-monitoring-topic-arn
+
+  AuthorizerLambdaErrorAlarmArn:
+    Value: !GetAtt AuthorizerLambdaErrorAlarm.Arn
+
+  ProductLambdaErrorAlarmArn:
+    Value: !GetAtt ProductLambdaErrorAlarm.Arn
+
+  OrderLambdaErrorAlarmArn:
+    Value: !GetAtt OrderLambdaErrorAlarm.Arn
+
+  ReportLambdaErrorAlarmArn:
+    Value: !GetAtt ReportLambdaErrorAlarm.Arn
