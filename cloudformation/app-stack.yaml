@@ -20,37 +20,8 @@ Parameters:
     Type: String
     Description: Email address to receive low-stock and order confirmation alerts
 
-  AdminAuthToken:
-    Type: String
-    NoEcho: true
-    MinLength: 1
-    Description: RBAC token for the admin role
-
-  ProductsAuthToken:
-    Type: String
-    NoEcho: true
-    MinLength: 1
-    Description: RBAC token for the products role
-
 
 Resources:
-
-  # ---------- RBAC token parameters ----------
-  AdminAuthParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub /cloudmart/${Environment}/auth/admin-token
-      Type: String
-      Value: !Ref AdminAuthToken
-      Description: CloudMart admin RBAC token
-
-  ProductsAuthParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub /cloudmart/${Environment}/auth/products-token
-      Type: String
-      Value: !Ref ProductsAuthToken
-      Description: CloudMart products RBAC token
 
   # ---------- EventBridge Event Bus ----------
   CloudMartEventBus:
@@ -129,6 +100,8 @@ Resources:
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
+          # Existing SecureString parameters are maintained in AWS SSM Parameter Store.
+          # Their secret values are never passed through GitHub Actions or CloudFormation parameters.
           ADMIN_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/admin-token
           PRODUCTS_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/products-token
           PRODUCT_LAMBDA_NAME: !Ref ProductFunction
