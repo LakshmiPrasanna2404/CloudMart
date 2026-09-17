@@ -104,6 +104,9 @@ Resources:
           # Their secret values are never passed through GitHub Actions or CloudFormation parameters.
           ADMIN_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/admin-token
           PRODUCTS_TOKEN_PARAMETER_NAME: !Sub /cloudmart/${Environment}/auth/products-token
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
+          DB_NAME: cloudmart
           PRODUCT_LAMBDA_NAME: !Ref ProductFunction
           ORDER_LAMBDA_NAME: !Ref OrderFunction
       Code:
