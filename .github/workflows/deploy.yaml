@@ -312,7 +312,7 @@ jobs:
 
           DB_HOST=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-data \
-            --query "Stacks[0].Outputs[?contains(OutputKey, 'DB') && contains(OutputKey, 'Endpoint')].OutputValue | [0]" \
+            --query "Stacks[0].Outputs[?OutputKey=='RDSEndpoint'].OutputValue | [0]" \
             --output text)
 
           if [ -z "$DB_HOST" ] || [ "$DB_HOST" = "None" ]; then
