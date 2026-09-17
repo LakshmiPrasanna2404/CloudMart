@@ -352,7 +352,7 @@ jobs:
           cp lambdas/report-generate/handler.py build/report-generate/
 
           python -m pip install \
-            -r lambdas/report-generate/requirements.txt \
+            PyMySQL==1.1.1 \
             -t build/report-generate \
             --quiet
 
