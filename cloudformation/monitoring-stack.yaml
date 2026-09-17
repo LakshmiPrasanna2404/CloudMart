@@ -37,7 +37,7 @@ Conditions:
 
 Resources:
 
-  MonitoringAlertsTopic:
+  MonitoringTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub cloudmart-${Environment}-monitoring-alerts
@@ -46,7 +46,7 @@ Resources:
     Type: AWS::SNS::Subscription
     Condition: HasAlertEmail
     Properties:
-      TopicArn: !Ref MonitoringAlertsTopic
+      TopicArn: !Ref MonitoringTopic
       Protocol: email
       Endpoint: !Ref AlertEmail
 
@@ -84,7 +84,7 @@ Resources:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-authorizer
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
   ProductLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -103,7 +103,7 @@ Resources:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-product
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
   OrderLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -122,7 +122,7 @@ Resources:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-order
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
   ReportLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -141,7 +141,7 @@ Resources:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-report-generate
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
   RDSCPUAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -160,7 +160,7 @@ Resources:
         - Name: DBInstanceIdentifier
           Value: !Ref DBInstanceIdentifier
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
   RDSFreeStorageAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -179,12 +179,12 @@ Resources:
         - Name: DBInstanceIdentifier
           Value: !Ref DBInstanceIdentifier
       AlarmActions:
-        - !Ref MonitoringAlertsTopic
+        - !Ref MonitoringTopic
 
 Outputs:
 
   MonitoringTopicArn:
     Description: SNS topic ARN for CloudMart monitoring alerts
-    Value: !Ref MonitoringAlertsTopic
+    Value: !Ref MonitoringTopic
     Export:
       Name: !Sub cloudmart-${Environment}-monitoring-topic-arn
