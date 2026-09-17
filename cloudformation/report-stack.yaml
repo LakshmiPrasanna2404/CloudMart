@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudMart report-generation Lambda
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - prod
+
+  ReportLambdaRoleArn:
+    Type: String
+    Description: IAM role ARN for the report-generation Lambda
+
+  DBHost:
+    Type: String
+    Description: RDS endpoint hostname
+
+  ReportsBucketName:
+    Type: String
+    Description: S3 bucket for generated reports
+
+  DBUsernameParameter:
+    Type: String
+    Default: /cloudmart/prod/db/username
+
+  DBPasswordParameter:
+    Type: String
+    Default: /cloudmart/prod/db/password
+
+  ArtifactBucketName:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  ArtifactKey:
+    Type: String
+    Default: lambdas/report-generate/report-generate.zip
+
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 0 * * ? *)
+
+Resources:
+  ReportGenerateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudmart-${Environment}-report-generate
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !Ref ReportLambdaRoleArn
+      Timeout: 120
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref ArtifactKey
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          REPORTS_BUCKET: !Ref ReportsBucketName
+          DB_HOST: !Ref DBHost
+          DB_NAME: cloudmart
+          DB_USERNAME_PARAMETER: !Ref DBUsernameParameter
+          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameter
+
+  ReportScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cloudmart-${Environment}-daily-report
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: ReportGenerateTarget
+          Arn: !GetAtt ReportGenerateFunction.Arn
+
+  AllowEventBridgeInvokeReport:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ReportGenerateFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReportScheduleRule.Arn
+
+Outputs:
+  ReportGenerateFunctionName:
+    Value: !Ref ReportGenerateFunction
+    Export:
+      Name: !Sub cloudmart-${Environment}-report-generate-function-name
