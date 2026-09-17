@@ -2,7 +2,8 @@ name: Deploy CloudMart
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'cloudformation/**'
       - 'lambdas/**'
@@ -18,35 +19,39 @@ env:
   EXEC_ROLE: ${{ vars.CFN_EXEC_ROLE_ARN }}
 
 jobs:
-
-  # ═══════════════════════════════════════════
-  # 0. LINT — validates CloudFormation templates, gates every stack deploy
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 0. LINT CLOUDFORMATION TEMPLATES
+  # ============================================================
   lint:
     name: Lint CloudFormation templates
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install cfn-lint
-        run: pip install cfn-lint --quiet
+        run: python -m pip install cfn-lint --quiet
 
-      - name: Run cfn-lint on all templates
+      - name: Validate CloudFormation templates
         run: cfn-lint cloudformation/*.yaml --ignore-checks W1011
 
-  # ═══════════════════════════════════════════
-  # 1. NETWORK
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 1. NETWORK STACK
+  # ============================================================
   deploy-network:
     name: Deploy network-stack
     runs-on: ubuntu-latest
     needs: lint
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,25 +59,31 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy network-stack via Change Set
+      - name: Deploy network-stack
         run: |
+          set -euo pipefail
+
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
             --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
-  # 2. DATA
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 2. DATA STACK
+  # Existing DB credentials and RBAC tokens are read from SSM.
+  # This workflow does not create or overwrite authentication tokens.
+  # ============================================================
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
     needs: deploy-network
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -80,81 +91,70 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Fetch DB credentials from SSM
+      - name: Fetch database credentials from SSM
         id: dbcreds
+        shell: bash
         run: |
-          USERNAME=$(aws ssm get-parameter --name /cloudmart/prod/db/username --with-decryption --query 'Parameter.Value' --output text)
-          PASSWORD=$(aws ssm get-parameter --name /cloudmart/prod/db/password --with-decryption --query 'Parameter.Value' --output text)
+          set -euo pipefail
+
+          USERNAME=$(aws ssm get-parameter \
+            --name "/cloudmart/prod/db/username" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
+          PASSWORD=$(aws ssm get-parameter \
+            --name "/cloudmart/prod/db/password" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
           echo "::add-mask::$USERNAME"
           echo "::add-mask::$PASSWORD"
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
 
-      - name: Create RBAC tokens in SSM Parameter Store if missing
+      - name: Verify existing RBAC SSM parameters
+        shell: bash
         run: |
           set -euo pipefail
 
-          create_parameter() {
-            local name="$1"
-            local description="$2"
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/admin-token" \
+            >/dev/null
+          echo "Verified: /cloudmart/prod/auth/admin-token"
 
-            if aws ssm get-parameter --name "$name" >/dev/null 2>&1; then
-              echo "Already exists: $name"
-            else
-              TOKEN=$(openssl rand -hex 32)
-              aws ssm put-parameter \
-                --name "$name" \
-                --type SecureString \
-                --value "$TOKEN" \
-                --tier Standard \
-                --description "$description"
-              echo "Created: $name"
-            fi
-          }
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/products-token" \
+            >/dev/null
+          echo "Verified: /cloudmart/prod/auth/products-token"
 
-          create_parameter \
-            "/cloudmart/prod/auth/admin-token" \
-            "CloudMart production admin RBAC token"
-
-          create_parameter \
-            "/cloudmart/prod/auth/products-token" \
-            "CloudMart production products RBAC token"
-
-
-      - name: Verify RBAC SSM parameters
+      - name: Deploy data-stack
         run: |
           set -euo pipefail
 
-          for name in \
-            /cloudmart/prod/auth/admin-token \
-            /cloudmart/prod/auth/products-token 
-           do
-            aws ssm get-parameter --name "$name" >/dev/null
-            echo "Verified: $name"
-          done
-
-      - name: Deploy data-stack via Change Set
-        run: |
           aws cloudformation deploy \
             --template-file cloudformation/data-stack.yaml \
             --stack-name cloudmart-data \
             --parameter-overrides \
               Environment=prod \
-              DBMasterUsername='${{ steps.dbcreds.outputs.username }}' \
-              DBMasterUserPassword='${{ steps.dbcreds.outputs.password }}' \
-            --role-arn ${{ env.EXEC_ROLE }} \
+              DBMasterUsername="${{ steps.dbcreds.outputs.username }}" \
+              DBMasterUserPassword="${{ steps.dbcreds.outputs.password }}" \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
-  # 3. IAM
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 3. IAM STACK
+  # ============================================================
   deploy-iam:
     name: Deploy iam-stack
     runs-on: ubuntu-latest
     needs: deploy-data
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -162,27 +162,32 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy iam-stack via Change Set
+      - name: Deploy iam-stack
         run: |
+          set -euo pipefail
+
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
             --parameter-overrides Environment=prod \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-  # ═══════════════════════════════════════════
-  # 4. APPLICATION — package, upload, deploy, force code update
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 4. APPLICATION STACK
+  # ============================================================
   deploy-app:
     name: Package and deploy app-stack
     runs-on: ubuntu-latest
     needs: deploy-iam
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -192,147 +197,293 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Package Lambdas with dependencies
+      - name: Package Lambda functions with dependencies
+        shell: bash
         run: |
+          set -euo pipefail
+
           for name in authorizer product order apply-schema; do
-            cd lambdas/$name
-            pip install pymysql bcrypt -t . --quiet 2>/dev/null || true
-            zip -r "../../${name}.zip" . -x "*.pyc"
-            cd ../..
+            echo "Packaging $name"
+            rm -f "${name}.zip"
+
+            pushd "lambdas/$name" >/dev/null
+            python -m pip install pymysql bcrypt -t . --quiet
+            zip -r "../../${name}.zip" . -x '*.pyc' '*__pycache__*'
+            popd >/dev/null
           done
 
-      - name: Upload packages to S3
+      - name: Upload Lambda packages to S3
+        shell: bash
         run: |
+          set -euo pipefail
+
           ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-data \
             --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
             --output text)
+
+          if [ -z "$ARTIFACTS_BUCKET" ] || [ "$ARTIFACTS_BUCKET" = "None" ]; then
+            echo "Artifacts bucket was not found"
+            exit 1
+          fi
+
           echo "ARTIFACTS_BUCKET=$ARTIFACTS_BUCKET" >> "$GITHUB_ENV"
+
           aws s3 cp authorizer.zip "s3://${ARTIFACTS_BUCKET}/lambdas/authorizer.zip"
           aws s3 cp product.zip "s3://${ARTIFACTS_BUCKET}/lambdas/product.zip"
           aws s3 cp order.zip "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
           aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
-      - name: Deploy app-stack via Change Set
+      - name: Deploy app-stack
         run: |
+          set -euo pipefail
+
           aws cloudformation deploy \
             --template-file cloudformation/app-stack.yaml \
             --stack-name cloudmart-app \
             --parameter-overrides \
               Environment=prod \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
-            --role-arn ${{ env.EXEC_ROLE }} \
+            --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      # CloudFormation only updates a Lambda's code when the S3Key string
-      # itself changes. Since it stays the same every deploy, force the
-      # update explicitly here so code changes always actually take effect.
       - name: Force Lambda code updates
+        shell: bash
         run: |
+          set -euo pipefail
+
           for fn in authorizer product order apply-schema; do
+            echo "Updating Lambda code: cloudmart-prod-$fn"
+
             aws lambda update-function-code \
-              --function-name cloudmart-prod-$fn \
-              --s3-bucket "$ARTIFACTS_BUCKET" --s3-key lambdas/$fn.zip --publish
-            aws lambda wait function-updated --function-name cloudmart-prod-$fn
+              --function-name "cloudmart-prod-$fn" \
+              --s3-bucket "$ARTIFACTS_BUCKET" \
+              --s3-key "lambdas/$fn.zip" \
+              --publish
+
+            aws lambda wait function-updated \
+              --function-name "cloudmart-prod-$fn"
           done
 
-  # ═══════════════════════════════════════════
-  # 5. APPLY SCHEMA
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 5. MONITORING STACK
+  # ============================================================
+  deploy-monitoring:
+    name: Deploy monitoring-stack
+    runs-on: ubuntu-latest
+    needs: deploy-app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy monitoring-stack
+        run: |
+          set -euo pipefail
+
+          aws cloudformation deploy \
+            --template-file cloudformation/monitoring-stack.yaml \
+            --stack-name cloudmart-monitoring \
+            --parameter-overrides \
+              Environment=prod \
+              AlertEmail="${{ vars.ALERT_EMAIL }}" \
+              DBInstanceIdentifier=cloudmart-prod-db \
+            --role-arn "$EXEC_ROLE" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+  # ============================================================
+  # 6. APPLY DATABASE SCHEMA
+  # ============================================================
   apply-schema:
     name: Apply RDS schema and sample data
     runs-on: ubuntu-latest
     needs: deploy-app
+
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Invoke apply-schema Lambda
+        shell: bash
         run: |
+          set -euo pipefail
+
           aws lambda invoke \
             --function-name cloudmart-prod-apply-schema \
             --payload '{}' \
             response.json
+
           cat response.json
 
-  # ═══════════════════════════════════════════
-  # 6. VERIFY AUTH — 401 / 401 / 200 / 403
-  # ═══════════════════════════════════════════
+  # ============================================================
+  # 7. VERIFY AUTHENTICATION AND RBAC
+  # ============================================================
   verify-auth:
     name: Verify 401 / 401 / 200 / 403 auth flow
     runs-on: ubuntu-latest
-    needs: apply-schema
+    needs:
+      - apply-schema
+      - deploy-monitoring
+
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Get Authorizer Function URL
         id: geturl
+        shell: bash
         run: |
+          set -euo pipefail
+
           URL=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-app \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerFunctionUrl'].OutputValue" \
             --output text)
+
+          if [ -z "$URL" ] || [ "$URL" = "None" ]; then
+            echo "Authorizer Function URL was not found"
+            exit 1
+          fi
+
+          case "$URL" in
+            */) ;;
+            *) URL="${URL}/" ;;
+          esac
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Authorizer URL retrieved"
 
       - name: Verify RBAC SSM parameters exist
+        shell: bash
         run: |
           set -euo pipefail
-          for name in \
-            /cloudmart/prod/auth/admin-token \
-            /cloudmart/prod/auth/products-token \
-           do
-            aws ssm get-parameter --name "$name" >/dev/null
-            echo "Found: $name"
-          done
 
-      - name: No token -> expect 401
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/admin-token" \
+            >/dev/null
+          echo "Found: /cloudmart/prod/auth/admin-token"
+
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/products-token" \
+            >/dev/null
+          echo "Found: /cloudmart/prod/auth/products-token"
+
+          echo "RBAC SSM parameter verification complete"
+
+      - name: No token returns 401
+        shell: bash
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          set -euo pipefail
+
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
             "${{ steps.geturl.outputs.url }}products")
-          echo "No-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
 
-      - name: Wrong token -> expect 401
+          echo "No-token status: $STATUS"
+          [ "$STATUS" = "401" ]
+
+      - name: Wrong token returns 401
+        shell: bash
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          set -euo pipefail
+
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer wrong-token-value" \
             "${{ steps.geturl.outputs.url }}products")
+
           echo "Wrong-token status: $STATUS"
-          [ "$STATUS" = "401" ] && echo "PASS" || (echo "FAIL" && exit 1)
+          [ "$STATUS" = "401" ]
 
       - name: Fetch admin token from SSM
         id: admintoken
+        shell: bash
         run: |
+          set -euo pipefail
+
           TOKEN=$(aws ssm get-parameter \
-            --name /cloudmart/prod/auth/admin-token \
+            --name "/cloudmart/prod/auth/admin-token" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+            echo "Admin token was empty"
+            exit 1
+          fi
+
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Admin token -> expect 200
+      - name: Admin token returns 200
         env:
           REAL_TOKEN: ${{ steps.admintoken.outputs.token }}
+        shell: bash
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          set -euo pipefail
+
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $REAL_TOKEN" \
             "${{ steps.geturl.outputs.url }}products")
+
           echo "Admin-token status: $STATUS"
-          [ "$STATUS" = "200" ] && echo "PASS" || (echo "FAIL" && exit 1)
+          [ "$STATUS" = "200" ]
+
+      - name: Fetch products token from SSM
+        id: productstoken
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/products-token" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+            echo "Products token was empty"
+            exit 1
+          fi
+
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Products token cannot create products returns 403
+        env:
+          PRODUCTS_TOKEN: ${{ steps.productstoken.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $PRODUCTS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "${{ steps.geturl.outputs.url }}products")
+
+          echo "Products-token POST /products status: $STATUS"
+          [ "$STATUS" = "403" ]
 
       - name: RBAC verification complete
         run: |
           echo "========================================"
           echo "CloudMart RBAC verification PASSED"
           echo "========================================"
-          echo "Missing token          -> 401 PASS"
-          echo "Invalid token          -> 401 PASS"
-          echo "Admin token            -> 200 PASS"
-          echo "Orders POST /products  -> 403 PASS"
+          echo "Missing token              -> 401 PASS"
+          echo "Invalid token              -> 401 PASS"
+          echo "Admin token                -> 200 PASS"
+          echo "Products token POST /products -> 403 PASS"
