@@ -1,7 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CloudMart monitoring alarms and SNS notification topic
+
+Description: CloudMart monitoring, CloudWatch alarms, and SNS notifications
 
 Parameters:
+
   Environment:
     Type: String
     Default: prod
@@ -12,7 +14,6 @@ Parameters:
   AlertEmail:
     Type: String
     Default: ""
-    Description: Optional email endpoint for monitoring notifications
 
   DBInstanceIdentifier:
     Type: String
@@ -27,10 +28,16 @@ Parameters:
     Default: 2
 
 Conditions:
-  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+  HasAlertEmail:
+    !Not
+      - !Equals
+        - !Ref AlertEmail
+        - ""
 
 Resources:
-  MonitoringTopic:
+
+  MonitoringAlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub cloudmart-${Environment}-monitoring-alerts
@@ -39,120 +46,145 @@ Resources:
     Type: AWS::SNS::Subscription
     Condition: HasAlertEmail
     Properties:
+      TopicArn: !Ref MonitoringAlertsTopic
       Protocol: email
-      TopicArn: !Ref MonitoringTopic
       Endpoint: !Ref AlertEmail
 
-  AuthorizerErrorsAlarm:
+  AuthorizerDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub cloudmart-${Environment}-authorizer-errors
+      AlarmName: !Sub cloudmart-${Environment}-authorizer-duration
+      AlarmDescription: Authorizer Lambda duration is high.
       Namespace: AWS/Lambda
-      MetricName: Errors
+      MetricName: Duration
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
       Dimensions:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-authorizer
+
+  AuthorizerLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-authorizer-errors
+      AlarmDescription: Authorizer Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
       Statistic: Sum
       Period: 300
       EvaluationPeriods: !Ref AlarmEvaluationPeriods
       Threshold: !Ref LambdaErrorThreshold
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub cloudmart-${Environment}-authorizer
       AlarmActions:
-        - !Ref MonitoringTopic
+        - !Ref MonitoringAlertsTopic
 
-  ProductErrorsAlarm:
+  ProductLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub cloudmart-${Environment}-product-errors
+      AlarmDescription: Product Lambda errors detected.
       Namespace: AWS/Lambda
       MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
       Dimensions:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-product
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: !Ref AlarmEvaluationPeriods
-      Threshold: !Ref LambdaErrorThreshold
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref MonitoringTopic
+        - !Ref MonitoringAlertsTopic
 
-  OrderErrorsAlarm:
+  OrderLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub cloudmart-${Environment}-order-errors
+      AlarmDescription: Order Lambda errors detected.
       Namespace: AWS/Lambda
       MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
       Dimensions:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-order
+      AlarmActions:
+        - !Ref MonitoringAlertsTopic
+
+  ReportLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-report-errors
+      AlarmDescription: Report Lambda errors detected.
+      Namespace: AWS/Lambda
+      MetricName: Errors
       Statistic: Sum
       Period: 300
       EvaluationPeriods: !Ref AlarmEvaluationPeriods
       Threshold: !Ref LambdaErrorThreshold
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref MonitoringTopic
-
-  ReportErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub cloudmart-${Environment}-report-generate-errors
-      Namespace: AWS/Lambda
-      MetricName: Errors
       Dimensions:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-report-generate
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: !Ref AlarmEvaluationPeriods
-      Threshold: !Ref LambdaErrorThreshold
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref MonitoringTopic
+        - !Ref MonitoringAlertsTopic
 
   RDSCPUAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub cloudmart-${Environment}-rds-high-cpu
+      AlarmDescription: RDS CPU utilization is high.
       Namespace: AWS/RDS
       MetricName: CPUUtilization
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref DBInstanceIdentifier
       Statistic: Average
       Period: 300
-      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      EvaluationPeriods: 2
       Threshold: 80
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref MonitoringTopic
-
-  RDSStorageAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub cloudmart-${Environment}-rds-low-storage
-      Namespace: AWS/RDS
-      MetricName: FreeStorageSpace
       Dimensions:
         - Name: DBInstanceIdentifier
           Value: !Ref DBInstanceIdentifier
-      Statistic: Minimum
+      AlarmActions:
+        - !Ref MonitoringAlertsTopic
+
+  RDSFreeStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-rds-low-storage
+      AlarmDescription: RDS free storage is low.
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Statistic: Average
       Period: 300
-      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      EvaluationPeriods: 2
       Threshold: 5368709120
       ComparisonOperator: LessThanThreshold
       TreatMissingData: notBreaching
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DBInstanceIdentifier
       AlarmActions:
-        - !Ref MonitoringTopic
+        - !Ref MonitoringAlertsTopic
 
 Outputs:
+
   MonitoringTopicArn:
-    Value: !Ref MonitoringTopic
+    Description: SNS topic ARN for CloudMart monitoring alerts
+    Value: !Ref MonitoringAlertsTopic
     Export:
       Name: !Sub cloudmart-${Environment}-monitoring-topic-arn
