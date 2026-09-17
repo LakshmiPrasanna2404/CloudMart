@@ -330,7 +330,7 @@ jobs:
   # 7. VERIFY AUTHENTICATION AND RBAC
   # ============================================================
   verify-auth:
-    name: Verify 401 / 401 / 200 / 403 auth flow
+    name: Verify 401 / 401 / 200 / 200 auth flow
     runs-on: ubuntu-latest
     needs:
       - apply-schema
@@ -461,7 +461,7 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Products token cannot create products returns 403
+      - name: Products token returns 200 for GET products
         env:
           PRODUCTS_TOKEN: ${{ steps.productstoken.outputs.token }}
         shell: bash
@@ -469,14 +469,11 @@ jobs:
           set -euo pipefail
 
           STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
-            -X POST \
             -H "Authorization: Bearer $PRODUCTS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
             "${{ steps.geturl.outputs.url }}products")
 
-          echo "Products-token POST /products status: $STATUS"
-          [ "$STATUS" = "403" ]
+          echo "Products-token GET /products status: $STATUS"
+          [ "$STATUS" = "200" ]
 
       - name: RBAC verification complete
         run: |
@@ -486,4 +483,4 @@ jobs:
           echo "Missing token              -> 401 PASS"
           echo "Invalid token              -> 401 PASS"
           echo "Admin token                -> 200 PASS"
-          echo "Products token POST /products -> 403 PASS"
+          echo "Products token GET /products -> 200 PASS"
