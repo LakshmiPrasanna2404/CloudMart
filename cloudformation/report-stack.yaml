@@ -51,9 +51,17 @@ Resources:
       Role: !Ref ReportLambdaRoleArn
       Timeout: 120
       MemorySize: 512
+
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-private-subnet-id
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub cloudmart-${Environment}-lambda-sg-id
+
       Code:
         S3Bucket: !Ref ArtifactBucketName
         S3Key: !Ref ArtifactKey
+
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
