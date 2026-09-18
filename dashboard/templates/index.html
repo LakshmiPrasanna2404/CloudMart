@@ -1,37 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>CloudMart | Operations Center</title>
+    <title>CloudMart Operations</title>
 
     <style>
         * {
             box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        :root {
-            --primary: #4f46e5;
-            --primary-dark: #3730a3;
-            --sidebar: #111827;
-            --background: #f4f6fb;
-            --card: #ffffff;
-            --text: #1f2937;
-            --muted: #6b7280;
-            --border: #e5e7eb;
-            --success: #16a34a;
-            --warning: #d97706;
-            --danger: #dc2626;
         }
 
         body {
-            font-family: "Segoe UI", Arial, sans-serif;
-            background: var(--background);
-            color: var(--text);
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            color: #172033;
         }
 
         .layout {
@@ -40,43 +24,39 @@
         }
 
         /* SIDEBAR */
-
         .sidebar {
-            width: 245px;
-            background: var(--sidebar);
+            width: 235px;
+            background: #111827;
             color: white;
-            padding: 25px 16px;
+            padding: 28px 16px;
             position: fixed;
-            height: 100vh;
-            left: 0;
             top: 0;
+            bottom: 0;
+            left: 0;
         }
 
         .brand {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 0 12px 30px;
-            font-size: 20px;
-            font-weight: 700;
+            font-size: 23px;
+            font-weight: bold;
+            padding: 0 14px 45px;
         }
 
         .brand-icon {
-            background: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #5146e5;
+            border-radius: 10px;
             width: 38px;
             height: 38px;
-            border-radius: 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            margin-right: 8px;
         }
 
         .menu-title {
-            color: #9ca3af;
+            color: #94a3b8;
             font-size: 11px;
-            text-transform: uppercase;
             letter-spacing: 1px;
-            padding: 12px;
+            padding: 0 14px 15px;
         }
 
         .nav-link {
@@ -84,37 +64,32 @@
             text-decoration: none;
             color: #d1d5db;
             padding: 13px 14px;
-            margin: 5px 0;
-            border-radius: 9px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
             font-size: 14px;
-            transition: 0.2s;
         }
 
         .nav-link:hover,
         .nav-link.active {
-            background: var(--primary);
+            background: #5146e5;
             color: white;
         }
 
-        .nav-link span {
-            margin-right: 10px;
-        }
-
-        .sidebar-footer {
+        .footer {
             position: absolute;
             bottom: 25px;
-            left: 25px;
-            right: 25px;
-            color: #9ca3af;
+            left: 28px;
+            color: #94a3b8;
             font-size: 11px;
+            line-height: 1.6;
         }
 
-        /* MAIN CONTENT */
-
+        /* MAIN */
         .main {
-            margin-left: 245px;
-            width: calc(100% - 245px);
-            padding: 28px 35px;
+            margin-left: 235px;
+            width: calc(100% - 235px);
+            padding: 38px;
         }
 
         .topbar {
@@ -122,328 +97,229 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 30px;
-            gap: 20px;
         }
 
-        .heading h1 {
-            font-size: 27px;
-            font-weight: 700;
+        h1 {
+            margin: 0;
+            font-size: 29px;
         }
 
-        .heading p {
-            color: var(--muted);
+        .subtitle {
+            color: #718096;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .status {
+            background: #ecfdf3;
+            color: #16803c;
+            border: 1px solid #bbf7d0;
+            padding: 10px 16px;
+            border-radius: 22px;
             font-size: 13px;
-            margin-top: 7px;
-        }
-
-        .system-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: white;
-            border: 1px solid var(--border);
-            padding: 10px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            color: var(--success);
         }
 
         .status-dot {
+            display: inline-block;
             width: 9px;
             height: 9px;
+            background: #16a34a;
             border-radius: 50%;
-            background: var(--success);
+            margin-right: 7px;
         }
 
         /* CARDS */
-
         .cards {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 18px;
+            grid-template-columns: repeat(2, minmax(180px, 1fr));
+            gap: 20px;
             margin-bottom: 25px;
         }
 
         .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 20px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 13px;
+            padding: 25px;
             box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04);
         }
 
-        .card-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
         .card-title {
-            color: var(--muted);
-            font-size: 13px;
+            color: #718096;
+            font-size: 14px;
         }
 
-        .card-icon {
-            width: 38px;
-            height: 38px;
-            border-radius: 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 18px;
-        }
-
-        .purple {
-            background: #ede9fe;
-            color: #6d28d9;
-        }
-
-        .blue {
-            background: #dbeafe;
-            color: #1d4ed8;
-        }
-
-        .green {
-            background: #dcfce7;
-            color: #15803d;
-        }
-
-        .orange {
-            background: #ffedd5;
-            color: #c2410c;
-        }
-
-        .card-number {
-            font-size: 30px;
-            font-weight: 700;
-            margin-top: 17px;
+        .number {
+            font-size: 36px;
+            font-weight: bold;
+            margin-top: 14px;
         }
 
         .card-description {
-            color: var(--muted);
-            font-size: 11px;
-            margin-top: 8px;
+            color: #94a3b8;
+            font-size: 12px;
+            margin-top: 9px;
         }
 
         /* SECTIONS */
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
 
         .section {
             background: white;
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 23px;
+            border: 1px solid #e5e7eb;
+            border-radius: 13px;
+            padding: 25px;
             margin-bottom: 25px;
             box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04);
         }
 
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            gap: 15px;
-        }
-
-        .section-header h2 {
-            font-size: 18px;
-        }
-
-        .section-header p {
-            color: var(--muted);
-            font-size: 12px;
-            margin-top: 5px;
-        }
-
-        .badge {
-            background: #eef2ff;
-            color: var(--primary);
-            padding: 6px 10px;
-            border-radius: 15px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-
-        /* REPORT */
-
-        .report-box {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 20px;
-            background: #f8faff;
-            border: 1px solid #e0e7ff;
-            border-radius: 12px;
-            padding: 18px;
-        }
-
-        .report-info strong {
-            display: block;
-            font-size: 14px;
+        .section h2 {
+            font-size: 20px;
+            margin-top: 0;
             margin-bottom: 8px;
-            word-break: break-word;
         }
 
-        .report-info p {
-            font-size: 12px;
-            color: var(--muted);
-            margin: 4px 0;
-        }
-
-        .button {
-            display: inline-block;
-            text-decoration: none;
-            background: var(--primary);
-            color: white;
-            padding: 11px 16px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        .button:hover {
-            background: var(--primary-dark);
-        }
-
-        .empty {
-            color: var(--muted);
+        .section-description {
+            color: #718096;
             font-size: 13px;
-            padding: 20px 0;
+            margin-bottom: 22px;
         }
 
-        /* TABLES */
-
-        .table-toolbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            gap: 15px;
-        }
-
-        .search {
-            width: 230px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 10px 12px;
-            font-size: 12px;
-            outline: none;
-        }
-
-        .search:focus {
-            border-color: var(--primary);
-        }
-
-        .table-wrap {
+        /* TABLE */
+        .table-wrapper {
             overflow-x: auto;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            min-width: 650px;
+            min-width: 600px;
         }
 
         th {
+            text-align: left;
             background: #f8fafc;
             color: #64748b;
-            font-size: 11px;
-            font-weight: 600;
-            text-align: left;
-            padding: 14px 12px;
-            border-bottom: 1px solid var(--border);
-            text-transform: uppercase;
+            font-size: 12px;
+            padding: 14px;
+            border-bottom: 1px solid #e2e8f0;
         }
 
         td {
-            padding: 14px 12px;
-            font-size: 12px;
-            border-bottom: 1px solid #f0f1f5;
-            vertical-align: top;
+            padding: 14px;
+            font-size: 13px;
+            border-bottom: 1px solid #edf2f7;
         }
 
         tr:hover {
-            background: #fafbff;
+            background: #f8fafc;
         }
 
-        /* ALERTS */
+        /* REPORT */
+        .report-box {
+            background: #f8faff;
+            border: 1px solid #dbe5ff;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .report-name {
+            font-weight: bold;
+            margin-bottom: 12px;
+            overflow-wrap: anywhere;
+        }
+
+        .report-info {
+            color: #64748b;
+            font-size: 13px;
+            margin-bottom: 15px;
+        }
+
+        .button {
+            display: inline-block;
+            background: #5146e5;
+            color: white;
+            text-decoration: none;
+            padding: 11px 17px;
+            border-radius: 7px;
+            font-size: 13px;
+        }
+
+        .button:hover {
+            background: #4338ca;
+        }
+
+        /* HEALTH */
+        .health-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 0;
+            border-bottom: 1px solid #edf2f7;
+        }
+
+        .health-item:last-child {
+            border-bottom: none;
+        }
+
+        .health-label {
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .health-description {
+            color: #718096;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .healthy {
+            color: #16a34a;
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        .empty {
+            color: #718096;
+            padding: 20px 0;
+            font-size: 14px;
+        }
 
         .error {
-            background: #fef2f2;
-            color: #991b1b;
-            border-left: 4px solid var(--danger);
-            padding: 13px 16px;
+            background: #fff1f2;
+            color: #be123c;
+            padding: 13px;
             border-radius: 8px;
-            margin-bottom: 15px;
-            font-size: 12px;
-        }
-
-        /* FOOTER */
-
-        .footer {
-            text-align: center;
-            color: var(--muted);
-            font-size: 11px;
-            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 13px;
         }
 
         /* RESPONSIVE */
-
-        @media (max-width: 1100px) {
-            .cards {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
         @media (max-width: 750px) {
             .sidebar {
-                width: 70px;
-                padding: 20px 8px;
-            }
-
-            .brand {
-                justify-content: center;
-                padding: 0 0 25px;
-            }
-
-            .brand-text,
-            .menu-title,
-            .nav-text,
-            .sidebar-footer {
-                display: none;
-            }
-
-            .nav-link {
-                text-align: center;
-                padding: 14px 5px;
-            }
-
-            .nav-link span {
-                margin: 0;
+                width: 190px;
             }
 
             .main {
-                margin-left: 70px;
-                width: calc(100% - 70px);
-                padding: 20px;
-            }
-
-            .topbar {
-                align-items: flex-start;
-                flex-direction: column;
+                margin-left: 190px;
+                width: calc(100% - 190px);
+                padding: 22px;
             }
 
             .cards {
                 grid-template-columns: 1fr;
             }
 
-            .report-box {
-                flex-direction: column;
+            .topbar {
                 align-items: flex-start;
-            }
-
-            .search {
-                width: 100%;
+                gap: 15px;
+                flex-direction: column;
             }
         }
     </style>
@@ -454,42 +330,36 @@
 <div class="layout">
 
     <!-- SIDEBAR -->
-
     <aside class="sidebar">
 
         <div class="brand">
-            <div class="brand-icon">☁</div>
-            <div class="brand-text">CloudMart</div>
+            <span class="brand-icon">☁</span>
+            CloudMart
         </div>
 
-        <div class="menu-title">Workspace</div>
+        <div class="menu-title">WORKSPACE</div>
 
-        <a href="#dashboard" class="nav-link active">
-            <span>▦</span>
-            <span class="nav-text">Dashboard</span>
+        <a class="nav-link active" data-page="dashboard">
+            ▦ &nbsp; Dashboard
         </a>
 
-        <a href="#inventory" class="nav-link">
-            <span>▣</span>
-            <span class="nav-text">Inventory</span>
+        <a class="nav-link" data-page="inventory">
+            ▣ &nbsp; Inventory
         </a>
 
-        <a href="#orders" class="nav-link">
-            <span>🛒</span>
-            <span class="nav-text">Orders</span>
+        <a class="nav-link" data-page="orders">
+            🛒 &nbsp; Orders
         </a>
 
-        <a href="#reports" class="nav-link">
-            <span>▤</span>
-            <span class="nav-text">Reports</span>
+        <a class="nav-link" data-page="reports">
+            ▤ &nbsp; Reports
         </a>
 
-        <a href="#health" class="nav-link">
-            <span>♥</span>
-            <span class="nav-text">System Health</span>
+        <a class="nav-link" data-page="health">
+            ♥ &nbsp; System Health
         </a>
 
-        <div class="sidebar-footer">
+        <div class="footer">
             CloudMart Operations<br>
             AWS Serverless Platform
         </div>
@@ -497,21 +367,25 @@
     </aside>
 
 
-    <!-- MAIN -->
+    <!-- MAIN CONTENT -->
+    <main class="main">
 
-    <main class="main" id="dashboard">
-
-        <!-- TOPBAR -->
-
+        <!-- HEADER -->
         <div class="topbar">
 
-            <div class="heading">
-                <h1>Operations Center</h1>
-                <p>Monitor your CloudMart inventory, orders and reports.</p>
-                <p>Last updated: {{ generated_at }}</p>
+            <div>
+                <h1 id="page-title">Operations Center</h1>
+
+                <div class="subtitle">
+                    Monitor your CloudMart inventory, orders and reports.
+                </div>
+
+                <div class="subtitle">
+                    Last updated: {{ generated_at }}
+                </div>
             </div>
 
-            <div class="system-status">
+            <div class="status">
                 <span class="status-dot"></span>
                 Dashboard Online
             </div>
@@ -519,150 +393,76 @@
         </div>
 
 
-        <!-- ERRORS -->
-
         {% for error in errors %}
-
-            <div class="error">
-                ⚠ {{ error }}
-            </div>
-
+            <div class="error">{{ error }}</div>
         {% endfor %}
 
 
-        <!-- SUMMARY CARDS -->
+        <!-- DASHBOARD PAGE -->
+        <section class="page active" id="dashboard">
 
-        <div class="cards">
-
-            <div class="card">
-
-                <div class="card-top">
-                    <span class="card-title">Total Products</span>
-                    <div class="card-icon purple">📦</div>
-                </div>
-
-                <div class="card-number">
-                    {{ products|length }}
-                </div>
-
-                <div class="card-description">
-                    Products loaded from RDS
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-top">
-                    <span class="card-title">Recent Orders</span>
-                    <div class="card-icon blue">🛒</div>
-                </div>
-
-                <div class="card-number">
-                    {{ orders|length }}
-                </div>
-
-                <div class="card-description">
-                    Recent orders from database
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-top">
-                    <span class="card-title">Latest Report</span>
-                    <div class="card-icon green">📄</div>
-                </div>
-
-                <div class="card-number">
-                    {{ "Ready" if report else "None" }}
-                </div>
-
-                <div class="card-description">
-                    Daily report stored in S3
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-top">
-                    <span class="card-title">Platform</span>
-                    <div class="card-icon orange">☁</div>
-                </div>
-
-                <div class="card-number">
-                    AWS
-                </div>
-
-                <div class="card-description">
-                    CloudMart production environment
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- SYSTEM HEALTH -->
-
-        <section class="section" id="health">
-
-            <div class="section-header">
-
-                <div>
-                    <h2>System Overview</h2>
-                    <p>Current dashboard service information</p>
-                </div>
-
-                <span class="badge">PRODUCTION</span>
-
-            </div>
-
-            <div class="cards" style="margin-bottom: 0;">
+            <div class="cards">
 
                 <div class="card">
-                    <div class="card-title">Database</div>
-                    <div class="card-number" style="font-size: 22px; color: var(--success);">
-                        Connected
+                    <div class="card-title">Total Products</div>
+
+                    <div class="number">
+                        {{ products|length }}
                     </div>
+
                     <div class="card-description">
-                        RDS MySQL
+                        Products loaded from RDS
                     </div>
                 </div>
 
                 <div class="card">
-                    <div class="card-title">Storage</div>
-                    <div class="card-number" style="font-size: 22px; color: var(--success);">
-                        S3
+                    <div class="card-title">Recent Orders</div>
+
+                    <div class="number">
+                        {{ orders|length }}
                     </div>
+
                     <div class="card-description">
-                        Reports bucket
+                        Recent orders from database
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-title">Dashboard</div>
-                    <div class="card-number" style="font-size: 22px; color: var(--success);">
-                        Online
-                    </div>
-                    <div class="card-description">
-                        Flask + Gunicorn
-                    </div>
+            </div>
+
+
+            <div class="section">
+
+                <h2>System Overview</h2>
+
+                <div class="section-description">
+                    Current CloudMart service information
                 </div>
 
-                <div class="card">
-                    <div class="card-title">Environment</div>
-                    <div class="card-number" style="font-size: 22px;">
-                        PROD
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Database</div>
+                        <div class="health-description">RDS MySQL</div>
                     </div>
-                    <div class="card-description">
-                        us-east-1
+
+                    <div class="healthy">Connected</div>
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Storage</div>
+                        <div class="health-description">Reports S3 bucket</div>
                     </div>
+
+                    <div class="healthy">Available</div>
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Dashboard</div>
+                        <div class="health-description">Flask and Gunicorn</div>
+                    </div>
+
+                    <div class="healthy">Online</div>
                 </div>
 
             </div>
@@ -670,267 +470,289 @@
         </section>
 
 
-        <!-- REPORT -->
+        <!-- INVENTORY PAGE -->
+        <section class="page" id="inventory">
 
-        <section class="section" id="reports">
+            <div class="section">
 
-            <div class="section-header">
+                <h2>Product Inventory</h2>
 
-                <div>
-                    <h2>Latest S3 Report</h2>
-                    <p>Your most recently generated order report</p>
+                <div class="section-description">
+                    Current products available in the CloudMart database.
                 </div>
 
-                <span class="badge">S3 STORAGE</span>
+                {% if products %}
 
-            </div>
+                    <div class="table-wrapper">
 
-            {% if report %}
+                        <table>
 
-                <div class="report-box">
+                            <thead>
+                                <tr>
+                                    {% for key in products[0].keys() %}
+                                        <th>{{ key }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
 
-                    <div class="report-info">
+                            <tbody>
 
-                        <strong>📄 {{ report.key }}</strong>
+                                {% for row in products %}
 
-                        <p>
-                            <b>Last Modified:</b>
-                            {{ report.last_modified }}
-                        </p>
-
-                        <p>
-                            <b>File Size:</b>
-                            {{ report.size }} bytes
-                        </p>
-
-                        <p>
-                            <b>Link Validity:</b>
-                            15 minutes
-                        </p>
-
-                    </div>
-
-                    <a class="button" href="{{ report.url }}">
-                        Download CSV ↓
-                    </a>
-
-                </div>
-
-            {% else %}
-
-                <div class="empty">
-                    No CSV report was found in the configured S3 bucket.
-                </div>
-
-            {% endif %}
-
-        </section>
-
-
-        <!-- INVENTORY -->
-
-        <section class="section" id="inventory">
-
-            <div class="section-header">
-
-                <div>
-                    <h2>Product Inventory</h2>
-                    <p>Current products retrieved from RDS MySQL</p>
-                </div>
-
-                <span class="badge">
-                    {{ products|length }} PRODUCTS
-                </span>
-
-            </div>
-
-            {% if products %}
-
-                <div class="table-toolbar">
-
-                    <span class="card-title">
-                        Inventory records
-                    </span>
-
-                    <input
-                        type="text"
-                        class="search"
-                        placeholder="Search products..."
-                        onkeyup="searchTable(this, 'products-table')"
-                    >
-
-                </div>
-
-                <div class="table-wrap">
-
-                    <table id="products-table">
-
-                        <thead>
-
-                            <tr>
-
-                                {% for key in products[0].keys() %}
-
-                                    <th>{{ key|replace("_", " ") }}</th>
+                                    <tr>
+                                        {% for value in row.values() %}
+                                            <td>
+                                                {{ value if value is not none else "" }}
+                                            </td>
+                                        {% endfor %}
+                                    </tr>
 
                                 {% endfor %}
 
-                            </tr>
+                            </tbody>
 
-                        </thead>
+                        </table>
 
-                        <tbody>
+                    </div>
 
-                            {% for row in products %}
+                {% else %}
 
-                                <tr>
+                    <div class="empty">
+                        No product records available.
+                    </div>
 
-                                    {% for value in row.values() %}
-
-                                        <td>
-                                            {{ value if value is not none else "—" }}
-                                        </td>
-
-                                    {% endfor %}
-
-                                </tr>
-
-                            {% endfor %}
-
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-            {% else %}
-
-                <div class="empty">
-                    No product records available.
-                </div>
-
-            {% endif %}
-
-        </section>
-
-
-        <!-- ORDERS -->
-
-        <section class="section" id="orders">
-
-            <div class="section-header">
-
-                <div>
-                    <h2>Recent Orders</h2>
-                    <p>Latest orders retrieved from RDS MySQL</p>
-                </div>
-
-                <span class="badge">
-                    {{ orders|length }} ORDERS
-                </span>
+                {% endif %}
 
             </div>
 
-            {% if orders %}
+        </section>
 
-                <div class="table-toolbar">
 
-                    <span class="card-title">
-                        Order records
-                    </span>
+        <!-- ORDERS PAGE -->
+        <section class="page" id="orders">
 
-                    <input
-                        type="text"
-                        class="search"
-                        placeholder="Search orders..."
-                        onkeyup="searchTable(this, 'orders-table')"
-                    >
+            <div class="section">
 
+                <h2>Recent Orders</h2>
+
+                <div class="section-description">
+                    Recent orders retrieved from the CloudMart database.
                 </div>
 
-                <div class="table-wrap">
+                {% if orders %}
 
-                    <table id="orders-table">
+                    <div class="table-wrapper">
 
-                        <thead>
+                        <table>
 
-                            <tr>
+                            <thead>
+                                <tr>
+                                    {% for key in orders[0].keys() %}
+                                        <th>{{ key }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
 
-                                {% for key in orders[0].keys() %}
+                            <tbody>
 
-                                    <th>{{ key|replace("_", " ") }}</th>
+                                {% for row in orders %}
+
+                                    <tr>
+                                        {% for value in row.values() %}
+                                            <td>
+                                                {{ value if value is not none else "" }}
+                                            </td>
+                                        {% endfor %}
+                                    </tr>
 
                                 {% endfor %}
 
-                            </tr>
+                            </tbody>
 
-                        </thead>
+                        </table>
 
-                        <tbody>
+                    </div>
 
-                            {% for row in orders %}
+                {% else %}
 
-                                <tr>
+                    <div class="empty">
+                        No order records available.
+                    </div>
 
-                                    {% for value in row.values() %}
+                {% endif %}
 
-                                        <td>
-                                            {{ value if value is not none else "—" }}
-                                        </td>
-
-                                    {% endfor %}
-
-                                </tr>
-
-                            {% endfor %}
-
-                        </tbody>
-
-                    </table>
-
-                </div>
-
-            {% else %}
-
-                <div class="empty">
-                    No order records available.
-                </div>
-
-            {% endif %}
+            </div>
 
         </section>
 
 
-        <div class="footer">
-            CloudMart Operations Center | AWS Serverless Architecture
-        </div>
+        <!-- REPORTS PAGE -->
+        <section class="page" id="reports">
+
+            <div class="section">
+
+                <h2>Reports</h2>
+
+                <div class="section-description">
+                    Latest order report generated and stored in Amazon S3.
+                </div>
+
+                {% if report %}
+
+                    <div class="report-box">
+
+                        <div class="report-name">
+                            📄 {{ report.key }}
+                        </div>
+
+                        <div class="report-info">
+                            Last Modified: {{ report.last_modified }}
+                        </div>
+
+                        <div class="report-info">
+                            File Size: {{ report.size }} bytes
+                        </div>
+
+                        <a class="button" href="{{ report.url }}">
+                            Download CSV Report
+                        </a>
+
+                    </div>
+
+                {% else %}
+
+                    <div class="empty">
+                        No report is currently available.
+                    </div>
+
+                {% endif %}
+
+            </div>
+
+        </section>
+
+
+        <!-- SYSTEM HEALTH PAGE -->
+        <section class="page" id="health">
+
+            <div class="section">
+
+                <h2>System Health</h2>
+
+                <div class="section-description">
+                    Current status of CloudMart services.
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Flask Dashboard</div>
+                        <div class="health-description">Application server</div>
+                    </div>
+
+                    <div class="healthy">Online</div>
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">RDS MySQL</div>
+                        <div class="health-description">Database service</div>
+                    </div>
+
+                    <div class="healthy">Connected</div>
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Amazon S3</div>
+                        <div class="health-description">Report storage</div>
+                    </div>
+
+                    <div class="healthy">Available</div>
+                </div>
+
+                <div class="health-item">
+                    <div>
+                        <div class="health-label">Environment</div>
+                        <div class="health-description">AWS Region: us-east-1</div>
+                    </div>
+
+                    <div class="healthy">Production</div>
+                </div>
+
+            </div>
+
+        </section>
 
     </main>
 
 </div>
 
 
+<!-- PAGE NAVIGATION -->
 <script>
 
-    function searchTable(input, tableId) {
+    const links = document.querySelectorAll(".nav-link");
+    const pages = document.querySelectorAll(".page");
+    const pageTitle = document.getElementById("page-title");
 
-        const filter = input.value.toLowerCase();
+    const titles = {
+        dashboard: "Operations Center",
+        inventory: "Product Inventory",
+        orders: "Recent Orders",
+        reports: "Reports",
+        health: "System Health"
+    };
 
-        const table = document.getElementById(tableId);
+    function showPage(pageName) {
 
-        const rows = table
-            .getElementsByTagName("tbody")[0]
-            .getElementsByTagName("tr");
+        pages.forEach(page => {
+            page.classList.remove("active");
+        });
 
-        for (let i = 0; i < rows.length; i++) {
+        links.forEach(link => {
+            link.classList.remove("active");
+        });
 
-            const text = rows[i].textContent.toLowerCase();
+        const selectedPage = document.getElementById(pageName);
+        const selectedLink = document.querySelector(
+            `.nav-link[data-page="${pageName}"]`
+        );
 
-            rows[i].style.display =
-                text.includes(filter) ? "" : "none";
-
+        if (selectedPage) {
+            selectedPage.classList.add("active");
         }
 
+        if (selectedLink) {
+            selectedLink.classList.add("active");
+        }
+
+        pageTitle.textContent = titles[pageName] || "Operations Center";
+
+        window.history.replaceState(
+            {},
+            "",
+            "#" + pageName
+        );
+    }
+
+    links.forEach(link => {
+
+        link.addEventListener("click", function () {
+
+            const pageName = this.getAttribute("data-page");
+
+            showPage(pageName);
+
+        });
+
+    });
+
+    const initialPage = window.location.hash.replace("#", "");
+
+    if (titles[initialPage]) {
+        showPage(initialPage);
+    } else {
+        showPage("dashboard");
     }
 
 </script>
