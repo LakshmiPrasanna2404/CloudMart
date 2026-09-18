@@ -20,6 +20,10 @@ DB_NAME = os.getenv("DB_NAME", "cloudmart")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+CLOUDWATCH_DASHBOARD_URL = os.getenv(
+    "CLOUDWATCH_DASHBOARD_URL",
+    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-operations",
+)
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
@@ -152,10 +156,20 @@ def dashboard():
         logging.exception("Unable to load orders")
         errors.append(f"Orders: {error}")
 
+    failed_orders = [
+        order
+        for order in orders
+        if str(order.get("status", "")).strip().upper() in {
+            "FAILED", "FAILURE", "CANCELLED", "CANCELED"
+        }
+    ]
+
     return render_template(
         "index.html",
         products=products,
         orders=orders,
+        failed_orders=failed_orders,
+        cloudwatch_dashboard_url=CLOUDWATCH_DASHBOARD_URL,
         report=latest_report(),
         errors=errors,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
