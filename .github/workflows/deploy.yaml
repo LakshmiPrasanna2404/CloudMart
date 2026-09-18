@@ -691,9 +691,19 @@ jobs:
           DB_HOST="__DB_HOST__"
           APP_DIR="/opt/cloudmart-dashboard"
 
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update -y
-          apt-get install -y python3 python3-pip python3-venv unzip awscli
+          # Install required packages for Amazon Linux or Ubuntu
+          if command -v dnf >/dev/null 2>&1; then
+            dnf install -y python3 python3-pip unzip awscli
+          elif command -v yum >/dev/null 2>&1; then
+            yum install -y python3 python3-pip unzip awscli
+          elif command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y
+            apt-get install -y python3 python3-pip python3-venv unzip awscli
+          else
+            echo "No supported package manager found"
+            exit 1
+          fi
 
           mkdir -p "$APP_DIR"
           aws s3 cp "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip" /tmp/dashboard.zip --region "$REGION"
