@@ -1,8 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
+
 Description: >
   CloudMart network-stack — VPC, public and private subnets, internet
   gateway, route tables, all security groups, and VPC Endpoints for
-  SSM, EventBridge, SNS, Lambda, and S3. No NAT Gateway is used.
+  SSM, EventBridge, SNS, Lambda, CloudWatch Monitoring, and S3.
+  No NAT Gateway is used.
 
 Parameters:
   Environment:
@@ -17,6 +19,11 @@ Parameters:
     Default: 203.0.113.0/32
 
 Resources:
+
+  # =========================
+  # VPC
+  # =========================
+
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -26,6 +33,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc
+
+  # =========================
+  # SUBNETS
+  # =========================
 
   PublicSubnet:
     Type: AWS::EC2::Subnet
@@ -58,6 +69,10 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-private-subnet-2
 
+  # =========================
+  # INTERNET GATEWAY
+  # =========================
+
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -70,6 +85,10 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
+
+  # =========================
+  # PUBLIC ROUTING
+  # =========================
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -93,6 +112,10 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
+  # =========================
+  # PRIVATE ROUTING
+  # =========================
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -112,6 +135,10 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
+
+  # =========================
+  # SECURITY GROUPS
+  # =========================
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -149,11 +176,17 @@ Resources:
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for SSM, EventBridge, SNS, and Lambda interface endpoints
+      GroupDescription: >
+        Security group for SSM, EventBridge, SNS, Lambda, and
+        CloudWatch Monitoring interface endpoints
       VpcId: !Ref VPC
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc-endpoint-sg
+
+  # =========================
+  # SECURITY GROUP INGRESS
+  # =========================
 
   RDSIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
@@ -183,7 +216,9 @@ Resources:
       FromPort: 443
       ToPort: 443
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, and Lambda
+      Description: >
+        Allow Lambda functions to reach SSM, EventBridge, SNS,
+        Lambda, and CloudWatch Monitoring endpoints
 
   EndpointIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
@@ -194,6 +229,10 @@ Resources:
       ToPort: 443
       SourceSecurityGroupId: !Ref EC2SecurityGroup
       Description: Allow the dashboard to reach SSM for config
+
+  # =========================
+  # SECURITY GROUP EGRESS
+  # =========================
 
   LambdaEgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
@@ -213,7 +252,8 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
-      Description: Allow Lambda functions to reach SSM, EventBridge, SNS, and Lambda
+      Description: >
+        Allow Lambda functions to reach interface endpoints
 
   LambdaEgressToS3:
     Type: AWS::EC2::SecurityGroupEgress
@@ -245,6 +285,10 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
+  # =========================
+  # S3 GATEWAY ENDPOINT
+  # =========================
+
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -254,15 +298,25 @@ Resources:
       RouteTableIds:
         - !Ref PrivateRouteTable
 
+  # =========================
+  # SSM INTERFACE ENDPOINT
+  # =========================
+
   SSMInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
       VpcEndpointType: Interface
-      SubnetIds: [!Ref PrivateSubnet]
-      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
       PrivateDnsEnabled: true
+
+  # =========================
+  # EVENTBRIDGE INTERFACE ENDPOINT
+  # =========================
 
   EventBridgeInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -270,9 +324,15 @@ Resources:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.events
       VpcEndpointType: Interface
-      SubnetIds: [!Ref PrivateSubnet]
-      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
       PrivateDnsEnabled: true
+
+  # =========================
+  # SNS INTERFACE ENDPOINT
+  # =========================
 
   SNSInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -280,9 +340,15 @@ Resources:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
       VpcEndpointType: Interface
-      SubnetIds: [!Ref PrivateSubnet]
-      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
       PrivateDnsEnabled: true
+
+  # =========================
+  # LAMBDA INTERFACE ENDPOINT
+  # =========================
 
   LambdaInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -290,11 +356,37 @@ Resources:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.lambda
       VpcEndpointType: Interface
-      SubnetIds: [!Ref PrivateSubnet]
-      SecurityGroupIds: [!Ref VPCEndpointSecurityGroup]
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
       PrivateDnsEnabled: true
 
+  # =========================
+  # CLOUDWATCH MONITORING ENDPOINT
+  # =========================
+
+  CloudWatchMonitoringInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-cloudwatch-monitoring-endpoint
+
+# =========================
+# OUTPUTS
+# =========================
+
 Outputs:
+
   VpcId:
     Value: !Ref VPC
     Export:
