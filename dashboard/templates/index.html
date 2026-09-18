@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>CloudMart Operations Dashboard</title>
+
+    <style>
+        :root {
+            font-family: Arial, sans-serif;
+            color: #172033;
+            background: #f4f6f9;
+        }
+
+        body {
+            margin: 0;
+        }
+
+        header {
+            background: #172033;
+            color: white;
+            padding: 24px 6%;
+        }
+
+        main {
+            padding: 24px 6%;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card,
+        section {
+            background: white;
+            border-radius: 10px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 24px;
+        }
+
+        .number {
+            font-size: 30px;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+
+        .error {
+            background: #fff0f0;
+            color: #9b1c1c;
+            border-left: 5px solid #d33;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 650px;
+        }
+
+        th,
+        td {
+            border-bottom: 1px solid #e5e7eb;
+            padding: 10px;
+            text-align: left;
+            vertical-align: top;
+            font-size: 14px;
+        }
+
+        th {
+            background: #eef1f5;
+        }
+
+        a.button {
+            display: inline-block;
+            padding: 10px 14px;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+        }
+
+        .muted {
+            color: #667085;
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1>CloudMart Operations Dashboard</h1>
+
+    <div class="muted" style="color: #d4d9e2;">
+        Read-only inventory, orders and daily reports
+    </div>
+</header>
+
+<main>
+
+    <p class="muted">
+        Generated: {{ generated_at }}
+    </p>
+
+    <!-- Error Messages -->
+    {% for error in errors %}
+        <div class="error">
+            {{ error }}
+        </div>
+    {% endfor %}
+
+    <!-- Summary Cards -->
+    <div class="cards">
+
+        <div class="card">
+            <div>Products Loaded</div>
+
+            <div class="number">
+                {{ products|length }}
+            </div>
+        </div>
+
+        <div class="card">
+            <div>Recent Orders Loaded</div>
+
+            <div class="number">
+                {{ orders|length }}
+            </div>
+        </div>
+
+        <div class="card">
+            <div>Latest Report</div>
+
+            <div class="number">
+                {{ "Available" if report else "None" }}
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Latest S3 Report -->
+    <section>
+
+        <h2>Latest S3 Report</h2>
+
+        {% if report %}
+
+            <p>
+                <strong>File:</strong>
+                {{ report.key }}
+            </p>
+
+            <p>
+                <strong>Last Modified:</strong>
+                {{ report.last_modified }}
+            </p>
+
+            <p>
+                <strong>Size:</strong>
+                {{ report.size }} bytes
+            </p>
+
+            <a class="button" href="{{ report.url }}">
+                Download Latest CSV
+            </a>
+
+            <p class="muted">
+                The download link expires after 15 minutes.
+            </p>
+
+        {% else %}
+
+            <p>
+                No CSV report was found in the configured S3 bucket.
+            </p>
+
+        {% endif %}
+
+    </section>
+
+    <!-- Product Inventory -->
+    <section>
+
+        <h2>Current Product Inventory</h2>
+
+        {% if products %}
+
+            <div class="table-wrap">
+
+                <table>
+
+                    <thead>
+                        <tr>
+                            {% for key in products[0].keys() %}
+                                <th>{{ key }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        {% for row in products %}
+
+                            <tr>
+
+                                {% for value in row.values() %}
+
+                                    <td>
+                                        {{ value if value is not none else "" }}
+                                    </td>
+
+                                {% endfor %}
+
+                            </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        {% else %}
+
+            <p>
+                No product records available.
+            </p>
+
+        {% endif %}
+
+    </section>
+
+    <!-- Recent Orders -->
+    <section>
+
+        <h2>Recent Orders</h2>
+
+        {% if orders %}
+
+            <div class="table-wrap">
+
+                <table>
+
+                    <thead>
+                        <tr>
+                            {% for key in orders[0].keys() %}
+                                <th>{{ key }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        {% for row in orders %}
+
+                            <tr>
+
+                                {% for value in row.values() %}
+
+                                    <td>
+                                        {{ value if value is not none else "" }}
+                                    </td>
+
+                                {% endfor %}
+
+                            </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        {% else %}
+
+            <p>
+                No order records available.
+            </p>
+
+        {% endif %}
+
+    </section>
+
+</main>
+
+</body>
+</html>
