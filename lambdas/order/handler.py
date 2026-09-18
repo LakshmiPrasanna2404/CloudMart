@@ -33,6 +33,12 @@ events_client = boto3.client(
 )
 
 
+cloudwatch = boto3.client(
+    "cloudwatch",
+    config=aws_config
+)
+
+
 # ============================================================
 # ENVIRONMENT
 # ============================================================
@@ -265,6 +271,49 @@ def publish_inventory_event(
             "ERROR",
             "Inventory event failed",
             product_id=product_id,
+            error=str(exc)
+        )
+
+
+# ============================================================
+# CLOUDWATCH METRICS
+# ============================================================
+
+def publish_metric(metric_name, dimensions=None):
+    """Publish a count metric to the CloudMart CloudWatch namespace."""
+    try:
+        metric_data = {
+            "MetricName": metric_name,
+            "Value": 1,
+            "Unit": "Count"
+        }
+
+        if dimensions:
+            metric_data["Dimensions"] = [
+                {
+                    "Name": str(key),
+                    "Value": str(value)
+                }
+                for key, value in dimensions.items()
+            ]
+
+        cloudwatch.put_metric_data(
+            Namespace="cloudmart",
+            MetricData=[metric_data]
+        )
+
+        log(
+            "INFO",
+            "CloudWatch metric published",
+            metric=metric_name
+        )
+
+    except Exception as exc:
+        # Metrics must not break the main order workflow.
+        log(
+            "ERROR",
+            "CloudWatch metric failed",
+            metric=metric_name,
             error=str(exc)
         )
 
@@ -727,6 +776,13 @@ def place_order(
             }
         )
 
+        publish_metric(
+            "OrdersPlaced",
+            {
+                "Environment": ENVIRONMENT
+            }
+        )
+
 
         for locked in locked_products:
 
@@ -738,6 +794,15 @@ def place_order(
                 product["stock_count"]
                 - locked["quantity"]
             )
+
+            if new_stock < LOW_STOCK_THRESHOLD:
+                publish_metric(
+                    "LowStockEvents",
+                    {
+                        "Environment": ENVIRONMENT,
+                        "ProductId": str(product["product_id"])
+                    }
+                )
 
 
             publish_inventory_event(
@@ -791,6 +856,14 @@ def place_order(
             }
         )
 
+        publish_metric(
+            "OrdersFailed",
+            {
+                "Environment": ENVIRONMENT,
+                "Reason": "DB_ERROR"
+            }
+        )
+
 
         return response(
             500,
@@ -823,6 +896,14 @@ def place_order(
             "FAILED",
             {
                 "reason": "INTERNAL_ERROR"
+            }
+        )
+
+        publish_metric(
+            "OrdersFailed",
+            {
+                "Environment": ENVIRONMENT,
+                "Reason": "INTERNAL_ERROR"
             }
         )
 
