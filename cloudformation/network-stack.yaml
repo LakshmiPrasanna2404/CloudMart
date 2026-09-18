@@ -214,9 +214,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Description: >
-        Allow Lambda functions to reach SSM, EventBridge, SNS,
-        Lambda, and CloudWatch Monitoring endpoints
+      Description: Allow Lambda access to interface endpoints
 
   EndpointIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
@@ -250,8 +248,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
-      Description: >
-        Allow Lambda functions to reach interface endpoints
+      Description: Allow Lambda access to interface endpoints
 
   LambdaEgressToS3:
     Type: AWS::EC2::SecurityGroupEgress
