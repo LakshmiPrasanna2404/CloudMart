@@ -8,6 +8,7 @@ on:
       - 'cloudformation/**'
       - 'lambdas/**'
       - '.github/workflows/**'
+      - 'dashboard/**'
   workflow_dispatch:
 
 permissions:
@@ -613,3 +614,208 @@ jobs:
           echo "Invalid token              -> 401 PASS"
           echo "Admin token                -> 200 PASS"
           echo "Products token GET /products -> 200 PASS"
+
+  # ============================================================
+  # 8. DEPLOY FLASK DASHBOARD TO EC2 THROUGH SSM
+  # ============================================================
+  deploy-dashboard:
+    name: Deploy EC2 Flask dashboard
+    runs-on: ubuntu-latest
+    needs: verify-auth
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get deployment values
+        id: values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" \
+            --output text)
+
+          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucketName'].OutputValue" \
+            --output text)
+
+          DB_HOST=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='RDSEndpoint'].OutputValue | [0]" \
+            --output text)
+
+          echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+
+      - name: Package dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dashboard/app.py
+          test -f dashboard/requirements.txt
+          test -f dashboard/templates/index.html
+
+          rm -f dashboard.zip
+          cd dashboard
+          zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*'
+          cd ..
+
+      - name: Upload dashboard package
+        run: |
+          aws s3 cp dashboard.zip \
+            "s3://${{ steps.values.outputs.artifacts_bucket }}/dashboard/dashboard.zip"
+
+      - name: Create EC2 deployment script
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > deploy-dashboard-on-ec2.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          REGION="__AWS_REGION__"
+          ARTIFACTS_BUCKET="__ARTIFACTS_BUCKET__"
+          REPORTS_BUCKET="__REPORTS_BUCKET__"
+          DB_HOST="__DB_HOST__"
+          APP_DIR="/opt/cloudmart-dashboard"
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y python3 python3-pip python3-venv unzip awscli
+
+          mkdir -p "$APP_DIR"
+          aws s3 cp "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip" /tmp/dashboard.zip --region "$REGION"
+          rm -rf "${APP_DIR:?}"/*
+          unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
+
+          python3 -m venv "$APP_DIR/venv"
+          "$APP_DIR/venv/bin/pip" install --upgrade pip
+          "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+
+          DB_USER=$(aws ssm get-parameter \
+            --name "/cloudmart/prod/db/username" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region "$REGION")
+
+          DB_PASSWORD=$(aws ssm get-parameter \
+            --name "/cloudmart/prod/db/password" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region "$REGION")
+
+          cat > /etc/cloudmart-dashboard.env <<ENV
+          AWS_REGION=$REGION
+          REPORTS_BUCKET=$REPORTS_BUCKET
+          DB_HOST=$DB_HOST
+          DB_NAME=cloudmart
+          DB_USER=$DB_USER
+          DB_PASSWORD=$DB_PASSWORD
+          PORT=80
+          ENV
+
+          chmod 600 /etc/cloudmart-dashboard.env
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<SERVICE
+          [Unit]
+          Description=CloudMart Flask Dashboard
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=$APP_DIR
+          EnvironmentFile=/etc/cloudmart-dashboard.env
+          ExecStart=$APP_DIR/venv/bin/gunicorn --workers 2 --bind 0.0.0.0:80 app:app
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable cloudmart-dashboard
+          systemctl restart cloudmart-dashboard
+          systemctl --no-pager --full status cloudmart-dashboard
+          ss -tlnp | grep ':80'
+          SCRIPT
+
+          sed -i \
+            -e "s|__AWS_REGION__|${AWS_REGION}|g" \
+            -e "s|__ARTIFACTS_BUCKET__|${{ steps.values.outputs.artifacts_bucket }}|g" \
+            -e "s|__REPORTS_BUCKET__|${{ steps.values.outputs.reports_bucket }}|g" \
+            -e "s|__DB_HOST__|${{ steps.values.outputs.db_host }}|g" \
+            deploy-dashboard-on-ec2.sh
+
+          base64 -w 0 deploy-dashboard-on-ec2.sh > deploy-dashboard-on-ec2.b64
+
+      - name: Deploy dashboard through SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids i-034c3ff52bc25b904 \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy CloudMart Flask dashboard" \
+            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
+            --region "$AWS_REGION" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM command: $COMMAND_ID"
+
+          for attempt in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-034c3ff52bc25b904 \
+              --region "$AWS_REGION" \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $attempt: $STATUS"
+
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-034c3ff52bc25b904 \
+                  --region "$AWS_REGION" \
+                  --query "StandardOutputContent" \
+                  --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-034c3ff52bc25b904 \
+                  --region "$AWS_REGION" \
+                  --query "[StandardOutputContent,StandardErrorContent]" \
+                  --output text
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for SSM deployment"
+          exit 1
