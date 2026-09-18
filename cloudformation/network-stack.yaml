@@ -143,7 +143,7 @@ Resources:
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for the EC2 Flask dashboard
+      GroupDescription: Security group for EC2 dashboard
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -158,7 +158,7 @@ Resources:
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for all Lambda functions in the private subnet
+      GroupDescription: Security group for Lambda functions
       VpcId: !Ref VPC
       Tags:
         - Key: Name
@@ -167,7 +167,7 @@ Resources:
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for the RDS MySQL instance
+      GroupDescription: Security group for RDS MySQL
       VpcId: !Ref VPC
       Tags:
         - Key: Name
@@ -176,9 +176,7 @@ Resources:
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: >
-        Security group for SSM, EventBridge, SNS, Lambda, and
-        CloudWatch Monitoring interface endpoints
+      GroupDescription: Security group for AWS interface endpoints
       VpcId: !Ref VPC
       Tags:
         - Key: Name
