@@ -215,6 +215,16 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow Lambda functions to reach SSM, EventBridge, SNS, and Lambda
 
+  LambdaEgressToS3:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: pl-63a5400a
+      Description: Allow Lambda functions to reach the S3 Gateway Endpoint
+
   EC2EgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
