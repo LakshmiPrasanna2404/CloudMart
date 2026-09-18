@@ -760,10 +760,22 @@ jobs:
           SERVICE
 
           systemctl daemon-reload
-          systemctl enable cloudmart-dashboard
+          systemctl enable cloudmart-dashboard || true
           systemctl restart cloudmart-dashboard
-          systemctl --no-pager --full status cloudmart-dashboard
-          ss -tlnp | grep ':80'
+
+          sleep 5
+
+          if systemctl is-active --quiet cloudmart-dashboard; then
+            echo "Dashboard service is active"
+          else
+            echo "Dashboard service failed"
+            journalctl -u cloudmart-dashboard --no-pager -n 50 || true
+            exit 1
+          fi
+
+          ss -tlnp | grep ':80' || true
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:80/ >/dev/null
+          echo "Dashboard deployment completed successfully"
           SCRIPT
 
           sed -i \
