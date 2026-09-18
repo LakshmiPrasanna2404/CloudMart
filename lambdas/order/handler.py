@@ -1404,6 +1404,13 @@ def cancel_order(
             }
         )
 
+        # Publish CloudWatch metric for successful cancellations
+        publish_metric(
+            "OrdersCancelled",
+            {
+                "Environment": ENVIRONMENT
+            }
+        )
 
         for item in restored_items:
 
