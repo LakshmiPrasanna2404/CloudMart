@@ -1,10 +1,11 @@
 import os
 import logging
-import hmac
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timezone, timedelta
 
 import boto3
 import pymysql
+
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import (
     Flask,
@@ -15,14 +16,25 @@ from flask import (
     session,
 )
 
+# ============================================================
+# APPLICATION
+# ============================================================
+
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 # ============================================================
 # AWS CONFIGURATION
 # ============================================================
 
-AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+AWS_REGION = os.getenv(
+    "AWS_REGION",
+    "us-east-1",
+)
 
 REPORTS_BUCKET = os.getenv(
     "REPORTS_BUCKET",
@@ -34,29 +46,21 @@ REPORTS_PREFIX = os.getenv(
     "reports/",
 )
 
-ADMIN_TOKEN_PARAMETER = os.getenv(
-    "ADMIN_TOKEN_PARAMETER",
-    "/cloudmart/prod/auth/admin-token",
-)
-
-CLOUDWATCH_DASHBOARD_URL = os.getenv(
-    "CLOUDWATCH_DASHBOARD_URL",
-    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/cloudmart-prod-operations",
-)
-
-# Flask session secret.
-# This must be supplied through the EC2 environment.
-app.secret_key = os.getenv(
-    "FLASK_SECRET_KEY",
-    "CHANGE_THIS_SECRET_IN_EC2_ENVIRONMENT",
-)
-
 # ============================================================
 # DATABASE CONFIGURATION
 # ============================================================
 
-DB_HOST = os.getenv("DB_HOST", "")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_HOST = os.getenv(
+    "DB_HOST",
+    "",
+)
+
+DB_PORT = int(
+    os.getenv(
+        "DB_PORT",
+        "3306",
+    )
+)
 
 DB_NAME = os.getenv(
     "DB_NAME",
@@ -74,7 +78,63 @@ DB_PASSWORD = os.getenv(
 )
 
 DB_CONNECT_TIMEOUT = int(
-    os.getenv("DB_CONNECT_TIMEOUT", "5")
+    os.getenv(
+        "DB_CONNECT_TIMEOUT",
+        "5",
+    )
+)
+
+# ============================================================
+# ADMIN AUTHENTICATION
+# ============================================================
+
+ADMIN_TOKEN_PARAMETER = os.getenv(
+    "ADMIN_TOKEN_PARAMETER",
+    "/cloudmart/prod/auth/admin-token",
+)
+
+# Session timeout.
+SESSION_TIMEOUT_MINUTES = int(
+    os.getenv(
+        "SESSION_TIMEOUT_MINUTES",
+        "60",
+    )
+)
+
+# Flask secret key.
+#
+# Recommended:
+# Set FLASK_SECRET_KEY in the EC2 environment.
+#
+# The fallback is generated when the application starts.
+# This means active sessions will expire after an application restart.
+FLASK_SECRET_KEY = os.getenv(
+    "FLASK_SECRET_KEY"
+)
+
+if not FLASK_SECRET_KEY:
+    FLASK_SECRET_KEY = os.urandom(32).hex()
+
+app.secret_key = FLASK_SECRET_KEY
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False,
+    PERMANENT_SESSION_LIFETIME=timedelta(
+        minutes=SESSION_TIMEOUT_MINUTES
+    ),
+)
+
+# ============================================================
+# CLOUDWATCH DASHBOARD
+# ============================================================
+
+CLOUDWATCH_DASHBOARD_URL = os.getenv(
+    "CLOUDWATCH_DASHBOARD_URL",
+    "https://us-east-1.console.aws.amazon.com/cloudwatch/home"
+    "?region=us-east-1"
+    "#dashboards/dashboard/cloudmart-prod-operations",
 )
 
 # ============================================================
@@ -93,138 +153,84 @@ ssm = boto3.client(
 
 
 # ============================================================
-# ADMIN AUTHENTICATION
+# ADMIN TOKEN
 # ============================================================
 
 def get_admin_token():
     """
-    Read the dashboard admin token from AWS SSM Parameter Store.
-    The parameter is a SecureString.
+    Read the CloudMart admin token securely from
+    AWS Systems Manager Parameter Store.
     """
 
-    response = ssm.get_parameter(
-        Name=ADMIN_TOKEN_PARAMETER,
-        WithDecryption=True,
-    )
-
-    token = (
-        response
-        .get("Parameter", {})
-        .get("Value")
-    )
-
-    if not token:
-        raise RuntimeError(
-            "Admin token was not found in SSM Parameter Store."
+    try:
+        response = ssm.get_parameter(
+            Name=ADMIN_TOKEN_PARAMETER,
+            WithDecryption=True,
         )
 
-    return token.strip()
+        token = response["Parameter"]["Value"]
+
+        if not token:
+            raise RuntimeError(
+                "Admin token parameter is empty."
+            )
+
+        return token
+
+    except (BotoCoreError, ClientError) as error:
+        logging.exception(
+            "Unable to retrieve admin token from SSM: %s",
+            error,
+        )
+
+        raise RuntimeError(
+            "Unable to retrieve admin authentication token."
+        )
 
 
-def is_admin_authenticated():
+def is_authenticated():
+    """
+    Check whether the current browser session
+    has successfully authenticated.
+    """
+
     return session.get("admin_authenticated") is True
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
+# ============================================================
+# LOGIN REQUIRED DECORATOR
+# ============================================================
 
-    if request.method == "POST":
+def login_required(view_function):
+    """
+    Protect a Flask route.
 
-        submitted_token = request.form.get(
-            "token",
-            "",
-        ).strip()
+    Unauthorized users are redirected to /login.
+    """
 
-        if not submitted_token:
-            return render_template(
-                "login.html",
-                error="Please enter the admin token.",
-            )
+    from functools import wraps
 
-        try:
-            expected_token = get_admin_token()
+    @wraps(view_function)
+    def wrapped_view(*args, **kwargs):
 
-            if hmac.compare_digest(
-                submitted_token,
-                expected_token,
-            ):
-                session.clear()
-
-                session["admin_authenticated"] = True
-
-                session["login_time"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-
-                return redirect(
-                    url_for("dashboard")
+        if not is_authenticated():
+            return redirect(
+                url_for(
+                    "login",
+                    next=request.path,
                 )
-
-            logging.warning(
-                "Invalid dashboard admin token attempt"
             )
 
-            return render_template(
-                "login.html",
-                error="Invalid admin token.",
-            )
-
-        except Exception:
-            logging.exception(
-                "Dashboard authentication failed"
-            )
-
-            return render_template(
-                "login.html",
-                error="Unable to verify the admin token. "
-                      "Please try again.",
-            )
-
-    if is_admin_authenticated():
-        return redirect(
-            url_for("dashboard")
+        return view_function(
+            *args,
+            **kwargs,
         )
 
-    return render_template(
-        "login.html"
-    )
-
-
-@app.route("/logout")
-def logout():
-
-    session.clear()
-
-    return redirect(
-        url_for("login")
-    )
+    return wrapped_view
 
 
 # ============================================================
-# AUTHENTICATION PROTECTION
-# ============================================================
-
-@app.before_request
-def protect_dashboard():
-
-    public_paths = {
-        "/login",
-        "/health",
-    }
-
-    if request.path in public_paths:
-        return None
-
-    if not is_admin_authenticated():
-        return redirect(
-            url_for("login")
-        )
-
-    return None
-
-
-# ============================================================
-# DATABASE
+# DATABASE HELPERS
 # ============================================================
 
 def database_configured():
@@ -241,6 +247,7 @@ def database_configured():
 def get_connection():
 
     if not database_configured():
+
         raise RuntimeError(
             "Database environment variables are not configured. "
             "Set DB_HOST, DB_NAME, DB_USER and DB_PASSWORD."
@@ -265,6 +272,12 @@ def fetch_table_rows(
     limit=20,
     order_by=None,
 ):
+    """
+    Read a small, read-only view of a table.
+
+    Table names are fixed internally and are never taken
+    directly from a request.
+    """
 
     allowed_tables = {
         "products",
@@ -315,7 +328,8 @@ def fetch_products():
 
         if (
             error.args
-            and error.args[0] in (1054, 1146)
+            and error.args[0]
+            in (1054, 1146)
         ):
 
             return fetch_table_rows(
@@ -371,7 +385,7 @@ def fetch_orders():
 
 
 # ============================================================
-# S3 REPORT
+# REPORT
 # ============================================================
 
 def latest_report():
@@ -440,10 +454,136 @@ def latest_report():
 
 
 # ============================================================
-# DASHBOARD
+# LOGIN
+# ============================================================
+
+@app.route(
+    "/login",
+    methods=["GET", "POST"],
+)
+def login():
+
+    # Already logged in.
+    if is_authenticated():
+
+        return redirect(
+            url_for("dashboard")
+        )
+
+    error = None
+
+    if request.method == "POST":
+
+        # Accept the common names used by login.html.
+        submitted_token = (
+            request.form.get("token")
+            or request.form.get("admin_token")
+            or request.form.get("password")
+            or ""
+        ).strip()
+
+        if not submitted_token:
+
+            error = "Please enter the admin token."
+
+        else:
+
+            try:
+
+                actual_token = get_admin_token()
+
+                # Constant-time comparison.
+                if hashlib.sha256(
+                    submitted_token.encode(
+                        "utf-8"
+                    )
+                ).digest() == hashlib.sha256(
+                    actual_token.encode(
+                        "utf-8"
+                    )
+                ).digest():
+
+                    session.clear()
+
+                    session.permanent = True
+
+                    session["admin_authenticated"] = True
+
+                    session["login_time"] = (
+                        datetime.now(
+                            timezone.utc
+                        ).isoformat()
+                    )
+
+                    logging.info(
+                        "Admin dashboard login successful"
+                    )
+
+                    next_url = request.args.get(
+                        "next"
+                    )
+
+                    if (
+                        next_url
+                        and next_url.startswith("/")
+                    ):
+                        return redirect(
+                            next_url
+                        )
+
+                    return redirect(
+                        url_for(
+                            "dashboard"
+                        )
+                    )
+
+                else:
+
+                    logging.warning(
+                        "Invalid dashboard admin token attempt"
+                    )
+
+                    error = (
+                        "Invalid admin token."
+                    )
+
+            except Exception as exception:
+
+                logging.exception(
+                    "Dashboard authentication error"
+                )
+
+                error = (
+                    "Unable to verify admin token. "
+                    "Please try again."
+                )
+
+    return render_template(
+        "login.html",
+        error=error,
+    )
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(
+        url_for("login")
+    )
+
+
+# ============================================================
+# MAIN DASHBOARD
 # ============================================================
 
 @app.route("/")
+@login_required
 def dashboard():
 
     products = []
@@ -500,13 +640,17 @@ def dashboard():
         products=products,
         orders=orders,
         failed_orders=failed_orders,
-        cloudwatch_dashboard_url=CLOUDWATCH_DASHBOARD_URL,
+        cloudwatch_dashboard_url=(
+            CLOUDWATCH_DASHBOARD_URL
+        ),
         report=latest_report(),
         errors=errors,
-        generated_at=datetime.now(
-            timezone.utc
-        ).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
+        generated_at=(
+            datetime.now(
+                timezone.utc
+            ).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            )
         ),
     )
 
@@ -525,7 +669,7 @@ def health():
 
 
 # ============================================================
-# START
+# APPLICATION START
 # ============================================================
 
 if __name__ == "__main__":
