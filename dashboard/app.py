@@ -1,6 +1,7 @@
 import os
 import logging
 import hashlib
+import hmac
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -168,7 +169,7 @@ def get_admin_token():
             WithDecryption=True,
         )
 
-        token = response["Parameter"]["Value"]
+        token = response["Parameter"]["Value"].strip()
 
         if not token:
             raise RuntimeError(
@@ -492,16 +493,12 @@ def login():
 
                 actual_token = get_admin_token()
 
-                # Constant-time comparison.
-                if hashlib.sha256(
-                    submitted_token.encode(
-                        "utf-8"
-                    )
-                ).digest() == hashlib.sha256(
-                    actual_token.encode(
-                        "utf-8"
-                    )
-                ).digest():
+                # Constant-time comparison of the submitted token
+                # with the token stored in AWS SSM Parameter Store.
+                if hmac.compare_digest(
+                    submitted_token,
+                    actual_token,
+                ):
 
                     session.clear()
 
