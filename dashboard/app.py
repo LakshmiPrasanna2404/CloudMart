@@ -1,25 +1,22 @@
 import os
 import logging
-import hmac
 from datetime import datetime, timezone
 
 import boto3
 import pymysql
 from botocore.exceptions import BotoCoreError, ClientError
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, session, redirect, url_for
 
 app = Flask(__name__)
+
+# Admin dashboard authentication.
+# Default token requested for the project:
+# CloudMartAdmin@2026
+# For production, set ADMIN_TOKEN and FLASK_SECRET_KEY as environment variables.
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "CloudMartAdmin@2026")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "CloudMartDashboardSecretKey2026")
+
 logging.basicConfig(level=logging.INFO)
-
-# Dashboard authentication.
-# ADMIN_TOKEN is injected on the EC2 instance from AWS SSM Parameter Store.
-# DASHBOARD_SESSION_SECRET is generated during deployment and stored only on EC2.
-app.config["SECRET_KEY"] = os.getenv("DASHBOARD_SESSION_SECRET", "")
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = False  # Dashboard currently runs over HTTP.
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 REPORTS_BUCKET = os.getenv("REPORTS_BUCKET", "cloudmart-reports-393476285814")
@@ -33,7 +30,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 CLOUDWATCH_DASHBOARD_URL = os.getenv(
     "CLOUDWATCH_DASHBOARD_URL",
-    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-operations",
+    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/cloudmart-prod-operations",
 )
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -149,53 +146,46 @@ def latest_report():
         return None
 
 
-@app.before_request
-def require_admin_login():
-    """Protect the operations dashboard with the admin token."""
-    public_endpoints = {"login", "logout", "health", "static"}
-
-    if request.endpoint in public_endpoints:
-        return None
-
-    if not ADMIN_TOKEN:
-        logging.error("ADMIN_TOKEN is not configured.")
-        return (
-            "Dashboard authentication is not configured. "
-            "Set ADMIN_TOKEN on the EC2 instance.",
-            503,
-        )
-
-    if not session.get("admin_authenticated"):
-        return redirect(url_for("login"))
-
-    return None
-
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "POST":
-        token = request.form.get("token", "")
-
-        if ADMIN_TOKEN and hmac.compare_digest(token, ADMIN_TOKEN):
-            session.clear()
-            session["admin_authenticated"] = True
-            return redirect(url_for("dashboard"))
-
-        return render_template(
-            "login.html",
-            error="Invalid admin token.",
-        ), 401
-
     if session.get("admin_authenticated"):
         return redirect(url_for("dashboard"))
 
-    return render_template("login.html", error=None)
+    error = None
+
+    if request.method == "POST":
+        token = request.form.get("token", "").strip()
+
+        if token and token == ADMIN_TOKEN:
+            session.clear()
+            session["admin_authenticated"] = True
+            session.permanent = True
+            return redirect(url_for("dashboard"))
+
+        error = "Invalid admin token."
+
+    return render_template("login.html", error=error)
 
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.before_request
+def require_admin_login():
+    # Health endpoint stays public so monitoring can check the service.
+    # Login and static assets must also remain accessible.
+    public_endpoints = {"login", "health", "static"}
+
+    if request.endpoint in public_endpoints:
+        return None
+
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("login"))
+
+    return None
 
 
 @app.route("/")
