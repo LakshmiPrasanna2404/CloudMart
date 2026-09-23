@@ -1,21 +1,14 @@
 import os
 import logging
+import secrets
 from datetime import datetime, timezone
 
 import boto3
 import pymysql
 from botocore.exceptions import BotoCoreError, ClientError
-from flask import Flask, render_template, request, session, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 
 app = Flask(__name__)
-
-# Admin dashboard authentication.
-# Default token requested for the project:
-# CloudMartAdmin@2026
-# For production, set ADMIN_TOKEN and FLASK_SECRET_KEY as environment variables.
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "CloudMartAdmin@2026")
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "CloudMartDashboardSecretKey2026")
-
 logging.basicConfig(level=logging.INFO)
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
@@ -28,12 +21,80 @@ DB_NAME = os.getenv("DB_NAME", "cloudmart")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+
+s3 = boto3.client("s3", region_name=AWS_REGION)
+ssm = boto3.client("ssm", region_name=AWS_REGION)
+
+ADMIN_TOKEN_PARAMETER = os.getenv(
+    "ADMIN_TOKEN_PARAMETER",
+    "/cloudmart/prod/auth/admin-token",
+)
+
+# Used to sign the Flask session cookie. A restart invalidates existing sessions.
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
+
 CLOUDWATCH_DASHBOARD_URL = os.getenv(
     "CLOUDWATCH_DASHBOARD_URL",
     "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/cloudmart-prod-operations",
 )
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+
+def get_admin_token():
+    """Read the dashboard admin token from SSM Parameter Store."""
+    response = ssm.get_parameter(
+        Name=ADMIN_TOKEN_PARAMETER,
+        WithDecryption=True,
+    )
+    return response["Parameter"]["Value"]
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        provided_token = request.form.get("admin_token", "")
+
+        try:
+            expected_token = get_admin_token()
+        except Exception:
+            logging.exception("Unable to read admin token from SSM")
+            return render_template(
+                "login.html",
+                error="Unable to validate login right now.",
+            ), 500
+
+        if secrets.compare_digest(provided_token, expected_token):
+            session.clear()
+            session["admin_authenticated"] = True
+            return redirect(url_for("dashboard"))
+
+        return render_template(
+            "login.html",
+            error="Invalid admin token.",
+        ), 401
+
+    if session.get("admin_authenticated"):
+        return redirect(url_for("dashboard"))
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+def admin_required(view_function):
+    """Require a successful admin login for dashboard pages."""
+    from functools import wraps
+
+    @wraps(view_function)
+    def wrapper(*args, **kwargs):
+        if not session.get("admin_authenticated"):
+            return redirect(url_for("login"))
+        return view_function(*args, **kwargs)
+
+    return wrapper
 
 
 def database_configured():
@@ -146,49 +207,8 @@ def latest_report():
         return None
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if session.get("admin_authenticated"):
-        return redirect(url_for("dashboard"))
-
-    error = None
-
-    if request.method == "POST":
-        token = request.form.get("token", "").strip()
-
-        if token and token == ADMIN_TOKEN:
-            session.clear()
-            session["admin_authenticated"] = True
-            session.permanent = True
-            return redirect(url_for("dashboard"))
-
-        error = "Invalid admin token."
-
-    return render_template("login.html", error=error)
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-@app.before_request
-def require_admin_login():
-    # Health endpoint stays public so monitoring can check the service.
-    # Login and static assets must also remain accessible.
-    public_endpoints = {"login", "health", "static"}
-
-    if request.endpoint in public_endpoints:
-        return None
-
-    if not session.get("admin_authenticated"):
-        return redirect(url_for("login"))
-
-    return None
-
-
 @app.route("/")
+@admin_required
 def dashboard():
     products = []
     orders = []
