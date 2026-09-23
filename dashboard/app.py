@@ -22,7 +22,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 CLOUDWATCH_DASHBOARD_URL = os.getenv(
     "CLOUDWATCH_DASHBOARD_URL",
-    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-operations",
+    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-prod-operations",
 )
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
