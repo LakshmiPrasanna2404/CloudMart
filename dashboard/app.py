@@ -1,6 +1,8 @@
 import os
 import logging
 import hashlib
+import csv
+import io
 import hmac
 from datetime import datetime, timezone, timedelta
 
@@ -386,72 +388,180 @@ def fetch_orders():
 
 
 # ============================================================
-# REPORT
+# REPORTS
 # ============================================================
 
+REPORT_PREFIXES = {
+    "last_24_hours": "reports/24hours/",
+    "monthly": "reports/monthly/",
+}
+
+
+def _report_metadata(item):
+    """Build dashboard metadata for an S3 report object."""
+    key = item["Key"]
+
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": REPORTS_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=900,
+    )
+
+    return {
+        "key": key,
+        "size": item["Size"],
+        "last_modified": (
+            item["LastModified"]
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%d %H:%M:%S UTC")
+        ),
+        "url": url,
+        "view_url": url_for("view_report", key=key),
+        "download_url": url,
+    }
+
+
+def list_reports(prefix, limit=20):
+    """Return recent CSV reports from one S3 report prefix."""
+    response = s3.list_objects_v2(
+        Bucket=REPORTS_BUCKET,
+        Prefix=prefix,
+    )
+
+    objects = [
+        item
+        for item in response.get("Contents", [])
+        if item["Key"].lower().endswith(".csv")
+    ]
+
+    objects.sort(
+        key=lambda item: item["LastModified"],
+        reverse=True,
+    )
+
+    return [
+        _report_metadata(item)
+        for item in objects[:limit]
+    ]
+
+
+def get_report_groups():
+    """Return both 24-hour and monthly report lists."""
+    try:
+        return {
+            "last_24_hours": list_reports(
+                REPORT_PREFIXES["last_24_hours"]
+            ),
+            "monthly": list_reports(
+                REPORT_PREFIXES["monthly"]
+            ),
+        }
+    except (BotoCoreError, ClientError) as error:
+        logging.exception(
+            "Unable to list CloudMart reports: %s",
+            error,
+        )
+        return {
+            "last_24_hours": [],
+            "monthly": [],
+        }
+
+
 def latest_report():
+    """Keep the existing latest-report summary for the dashboard card."""
+    groups = get_report_groups()
+
+    all_reports = (
+        groups["last_24_hours"]
+        + groups["monthly"]
+    )
+
+    if not all_reports:
+        return None
+
+    return max(
+        all_reports,
+        key=lambda item: item["last_modified"],
+    )
+
+
+@app.route("/reports/view/<path:key>")
+@login_required
+def view_report(key):
+    """Display a CSV report inside the dashboard."""
+    if not key.startswith("reports/") or not key.lower().endswith(".csv"):
+        return "Invalid report path.", 400
 
     try:
-
-        response = s3.list_objects_v2(
+        response = s3.get_object(
             Bucket=REPORTS_BUCKET,
-            Prefix=REPORTS_PREFIX,
+            Key=key,
         )
 
-        objects = response.get(
-            "Contents",
-            [],
+        content = response["Body"].read().decode(
+            "utf-8-sig"
         )
 
-        csv_objects = [
-            item
-            for item in objects
-            if item["Key"]
-            .lower()
-            .endswith(".csv")
-        ]
+        rows = list(csv.reader(io.StringIO(content)))
 
-        if not csv_objects:
-            return None
+        summary = []
+        details = []
 
-        newest = max(
-            csv_objects,
-            key=lambda item: item["LastModified"],
-        )
+        in_details = False
 
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={
-                "Bucket": REPORTS_BUCKET,
-                "Key": newest["Key"],
+        for row in rows:
+            if not row:
+                continue
+
+            if row[0] == "Order Details":
+                in_details = True
+                continue
+
+            if not in_details:
+                if len(row) >= 2:
+                    summary.append(
+                        {
+                            "metric": row[0],
+                            "value": row[1],
+                        }
+                    )
+            else:
+                details.append(row)
+
+        return render_template(
+            "index.html",
+            products=[],
+            orders=[],
+            failed_orders=[],
+            cloudwatch_dashboard_url=CLOUDWATCH_DASHBOARD_URL,
+            report=None,
+            report_groups={},
+            report_detail={
+                "key": key,
+                "summary": summary,
+                "details": details,
             },
-            ExpiresIn=900,
-        )
-
-        return {
-            "key": newest["Key"],
-            "size": newest["Size"],
-            "last_modified": (
-                newest["LastModified"]
-                .astimezone(timezone.utc)
-                .strftime(
+            errors=[],
+            generated_at=(
+                datetime.now(timezone.utc).strftime(
                     "%Y-%m-%d %H:%M:%S UTC"
                 )
             ),
-            "url": url,
-        }
-
-    except (
-        BotoCoreError,
-        ClientError,
-    ) as error:
-
-        logging.exception(
-            "Unable to retrieve latest report: %s",
-            error,
         )
 
-        return None
+    except (BotoCoreError, ClientError, UnicodeDecodeError) as error:
+        logging.exception(
+            "Unable to view report %s: %s",
+            key,
+            error,
+        )
+        return (
+            "Unable to open the selected report.",
+            500,
+        )
 
 
 # ============================================================
@@ -641,6 +751,8 @@ def dashboard():
             CLOUDWATCH_DASHBOARD_URL
         ),
         report=latest_report(),
+        report_groups=get_report_groups(),
+        report_detail=None,
         errors=errors,
         generated_at=(
             datetime.now(
