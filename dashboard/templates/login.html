@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 
 <head>
 
-    <meta charset="UTF-8">
+    <meta charset="utf-8">
 
     <meta
         name="viewport"
@@ -14,37 +14,36 @@
 
     <style>
 
-        * {
-            box-sizing: border-box;
-        }
-
         body {
             margin: 0;
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+
+            display: grid;
+            place-items: center;
+
             font-family: Arial, sans-serif;
+
             background: #f4f6f9;
             color: #172033;
         }
 
         .login-card {
+
             width: min(420px, 90%);
+
             background: white;
-            padding: 32px;
+
+            padding: 30px;
+
             border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.10);
+
+            box-shadow:
+                0 4px 18px
+                rgba(0, 0, 0, 0.10);
         }
 
         h1 {
             margin-top: 0;
-            margin-bottom: 8px;
-        }
-
-        .subtitle {
-            color: #667085;
-            margin-bottom: 24px;
         }
 
         label {
@@ -54,44 +53,59 @@
         }
 
         input {
+
             width: 100%;
+
+            box-sizing: border-box;
+
             padding: 12px;
-            border: 1px solid #d0d5dd;
-            border-radius: 8px;
-            font-size: 15px;
+
+            border:
+                1px solid #cbd5e1;
+
+            border-radius: 6px;
+
             margin-bottom: 16px;
         }
 
         button {
+
             width: 100%;
+
             padding: 12px;
+
             border: none;
-            border-radius: 8px;
+
+            border-radius: 6px;
+
             background: #2563eb;
+
             color: white;
-            font-size: 15px;
+
             font-weight: 600;
+
             cursor: pointer;
         }
 
-        button:hover {
-            background: #1d4ed8;
-        }
-
         .error {
-            background: #fef3f2;
-            color: #b42318;
-            border: 1px solid #fecdca;
-            padding: 10px;
-            border-radius: 8px;
+
+            background: #fff0f0;
+
+            color: #9b1c1c;
+
+            border-left:
+                5px solid #d33;
+
+            padding: 12px;
+
             margin-bottom: 16px;
         }
 
-        .security-note {
-            margin-top: 18px;
-            font-size: 12px;
+        .muted {
+
             color: #667085;
-            text-align: center;
+
+            font-size: 13px;
         }
 
     </style>
@@ -102,11 +116,10 @@
 
 <div class="login-card">
 
-    <h1>CloudMart Admin</h1>
+    <h1>CloudMart Admin Login</h1>
 
-    <p class="subtitle">
-        Enter the administrator token to access
-        the operations dashboard.
+    <p class="muted">
+        Enter the CloudMart production admin token.
     </p>
 
     {% if error %}
@@ -118,8 +131,9 @@
     {% endif %}
 
     <form
-        method="POST"
+        method="post"
         action="{{ url_for('login') }}"
+        autocomplete="off"
     >
 
         <label for="token">
@@ -131,8 +145,8 @@
             name="token"
             type="password"
             placeholder="Enter admin token"
-            autocomplete="off"
             required
+            autofocus
         >
 
         <button type="submit">
@@ -140,10 +154,6 @@
         </button>
 
     </form>
-
-    <div class="security-note">
-        CloudMart RBAC protected dashboard
-    </div>
 
 </div>
 
