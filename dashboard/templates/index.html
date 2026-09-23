@@ -1,4 +1,4 @@
-
+<!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -109,47 +109,6 @@
             border-radius: 6px;
         }
 
-
-        .button.secondary {
-            background: #475569;
-            margin-left: 8px;
-        }
-
-        .button.small {
-            padding: 7px 10px;
-            font-size: 13px;
-        }
-
-        .report-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 14px;
-            margin-bottom: 12px;
-        }
-
-        .report-actions {
-            margin-top: 10px;
-        }
-
-        .report-summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
-            margin: 16px 0;
-        }
-
-        .report-summary-item {
-            background: #f8fafc;
-            border-radius: 8px;
-            padding: 12px;
-        }
-
-        .report-summary-item strong {
-            display: block;
-            margin-top: 5px;
-            font-size: 18px;
-        }
-
         .muted {
             color: #667085;
             font-size: 13px;
@@ -231,144 +190,40 @@
 
     </div>
 
-    <!-- Reports -->
+    <!-- Latest S3 Report -->
     <section id="reports">
 
-        <h2>Reports</h2>
+        <h2>Latest S3 Report</h2>
 
-        {% if report_detail %}
+        {% if report %}
 
             <p>
-                <strong>Viewing:</strong>
-                {{ report_detail.key }}
+                <strong>File:</strong>
+                {{ report.key }}
             </p>
 
-            <div class="report-summary">
-                {% for item in report_detail.summary %}
-                    <div class="report-summary-item">
-                        <div class="muted">{{ item.metric }}</div>
-                        <strong>{{ item.value }}</strong>
-                    </div>
-                {% endfor %}
-            </div>
-
-            {% if report_detail.details and report_detail.details|length > 1 %}
-
-                <h3>Order Details</h3>
-
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                {% for value in report_detail.details[0] %}
-                                    <th>{{ value }}</th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-
-                        <tbody>
-                            {% for row in report_detail.details[1:] %}
-                                <tr>
-                                    {% for value in row %}
-                                        <td>{{ value if value is not none else "" }}</td>
-                                    {% endfor %}
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-
-            {% else %}
-
-                <p>No orders were found for this report period.</p>
-
-            {% endif %}
+            <p>
+                <strong>Last Modified:</strong>
+                {{ report.last_modified }}
+            </p>
 
             <p>
-                <a class="button secondary" href="{{ url_for('dashboard') }}#reports">
-                    Back to Reports
-                </a>
+                <strong>Size:</strong>
+                {{ report.size }} bytes
+            </p>
+
+            <a class="button" href="{{ report.url }}">
+                Download Latest CSV
+            </a>
+
+            <p class="muted">
+                The download link expires after 15 minutes.
             </p>
 
         {% else %}
 
-            <p class="muted">
-                Reports are generated automatically and stored securely in S3.
-                Revenue is included inside every CSV report.
-            </p>
-
-            <h3>Last 24 Hours</h3>
-
-            {% if report_groups and report_groups.last_24_hours %}
-
-                {% for item in report_groups.last_24_hours %}
-
-                    <div class="report-card">
-                        <strong>{{ item.key }}</strong>
-
-                        <p class="muted">
-                            Modified: {{ item.last_modified }}
-                            · Size: {{ item.size }} bytes
-                        </p>
-
-                        <div class="report-actions">
-                            <a class="button small"
-                               href="{{ item.view_url }}">
-                                View
-                            </a>
-
-                            <a class="button small secondary"
-                               href="{{ item.download_url }}">
-                                Download
-                            </a>
-                        </div>
-                    </div>
-
-                {% endfor %}
-
-            {% else %}
-
-                <p>No Last 24 Hours reports are available yet.</p>
-
-            {% endif %}
-
-            <h3>Monthly</h3>
-
-            {% if report_groups and report_groups.monthly %}
-
-                {% for item in report_groups.monthly %}
-
-                    <div class="report-card">
-                        <strong>{{ item.key }}</strong>
-
-                        <p class="muted">
-                            Modified: {{ item.last_modified }}
-                            · Size: {{ item.size }} bytes
-                        </p>
-
-                        <div class="report-actions">
-                            <a class="button small"
-                               href="{{ item.view_url }}">
-                                View
-                            </a>
-
-                            <a class="button small secondary"
-                               href="{{ item.download_url }}">
-                                Download
-                            </a>
-                        </div>
-                    </div>
-
-                {% endfor %}
-
-            {% else %}
-
-                <p>No monthly reports are available yet.</p>
-
-            {% endif %}
-
-            <p class="muted">
-                Download links expire after 15 minutes.
+            <p>
+                No CSV report was found in the configured S3 bucket.
             </p>
 
         {% endif %}
