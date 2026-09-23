@@ -706,37 +706,13 @@ jobs:
           fi
 
           mkdir -p "$APP_DIR"
-
-          aws s3 cp \
-            "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip" \
-            /tmp/dashboard.zip \
-            --region "$REGION"
-
-          # Remove the previous virtual environment completely.
-          # This prevents corrupted or partially-installed Python packages
-          # from being reused during deployment.
-          rm -rf "${APP_DIR:?}/venv"
-
-          # Remove previous dashboard application files.
+          aws s3 cp "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip" /tmp/dashboard.zip --region "$REGION"
           rm -rf "${APP_DIR:?}"/*
-          rm -rf "${APP_DIR:?}"/.[!.]* "${APP_DIR:?}"/..?* 2>/dev/null || true
-
-          # Extract the new dashboard package.
           unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
 
-          # Create a completely fresh virtual environment.
           python3 -m venv "$APP_DIR/venv"
-
-          # Upgrade packaging tools using the new environment's Python.
-          "$APP_DIR/venv/bin/python" -m pip install --upgrade \
-            pip \
-            setuptools \
-            wheel
-
-          # Install dashboard dependencies without using pip's cache.
-          "$APP_DIR/venv/bin/python" -m pip install \
-            --no-cache-dir \
-            -r "$APP_DIR/requirements.txt"
+          "$APP_DIR/venv/bin/pip" install --upgrade pip
+          "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 
           DB_USER=$(aws ssm get-parameter \
             --name "/cloudmart/prod/db/username" \
