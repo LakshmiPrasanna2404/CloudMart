@@ -66,6 +66,8 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Sub cloudmart-${Environment}-authorizer
+      AlarmActions:
+        - !Ref MonitoringTopic
 
   AuthorizerLambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -180,6 +182,186 @@ Resources:
           Value: !Ref DBInstanceIdentifier
       AlarmActions:
         - !Ref MonitoringTopic
+
+  CloudMartDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub cloudmart-${Environment}-operations
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders Placed",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [["cloudmart", "OrdersPlaced", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders Cancelled",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [["cloudmart", "OrdersCancelled", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders Failed by Reason",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [
+                  ["cloudmart", "OrdersFailed", "Environment", "${Environment}", "Reason", "DB_ERROR", {"label": "DB_ERROR"}],
+                  ["...", "Reason", "INTERNAL_ERROR", {"label": "INTERNAL_ERROR"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Low Stock Events",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SEARCH('{cloudmart,Environment,ProductId} MetricName=\\\"LowStockEvents\\\" Environment=\\\"${Environment}\\\"', 'Sum', 300)", "label": "Low Stock Events", "id": "e1"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Invocations",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "cloudmart-${Environment}-authorizer", {"label": "Authorizer"}],
+                  [".", ".", ".", "cloudmart-${Environment}-product", {"label": "Product"}],
+                  [".", ".", ".", "cloudmart-${Environment}-order", {"label": "Order"}],
+                  [".", ".", ".", "cloudmart-${Environment}-report-generate", {"label": "Report"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Errors",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [
+                  ["AWS/Lambda", "Errors", "FunctionName", "cloudmart-${Environment}-authorizer", {"label": "Authorizer"}],
+                  [".", ".", ".", "cloudmart-${Environment}-product", {"label": "Product"}],
+                  [".", ".", ".", "cloudmart-${Environment}-order", {"label": "Order"}],
+                  [".", ".", ".", "cloudmart-${Environment}-report-generate", {"label": "Report"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Duration",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Average",
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "cloudmart-${Environment}-authorizer", {"label": "Authorizer"}],
+                  [".", ".", ".", "cloudmart-${Environment}-product", {"label": "Product"}],
+                  [".", ".", ".", "cloudmart-${Environment}-order", {"label": "Order"}],
+                  [".", ".", ".", "cloudmart-${Environment}-report-generate", {"label": "Report"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS CPU Utilization",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Average",
+                "metrics": [["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DBInstanceIdentifier}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS Free Storage",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Average",
+                "metrics": [["AWS/RDS", "FreeStorageSpace", "DBInstanceIdentifier", "${DBInstanceIdentifier}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS Database Connections",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Average",
+                "metrics": [["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "${DBInstanceIdentifier}"]]
+              }
+            }
+          ]
+        }
 
 Outputs:
 
