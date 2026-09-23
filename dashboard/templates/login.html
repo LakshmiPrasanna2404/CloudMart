@@ -1,86 +1,152 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
     <title>CloudMart Admin Login</title>
+
     <style>
-        :root {
-            font-family: Arial, sans-serif;
-            color: #172033;
-            background: #f4f6f9;
+
+        * {
+            box-sizing: border-box;
         }
+
         body {
             margin: 0;
             min-height: 100vh;
-            display: grid;
-            place-items: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, sans-serif;
+            background: #f4f6f9;
+            color: #172033;
         }
+
         .login-card {
             width: min(420px, 90%);
             background: white;
-            padding: 28px;
+            padding: 32px;
             border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,.10);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.10);
         }
-        h1 { margin-top: 0; }
+
+        h1 {
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #667085;
+            margin-bottom: 24px;
+        }
+
         label {
             display: block;
-            margin: 16px 0 8px;
+            margin-bottom: 8px;
             font-weight: 600;
         }
+
         input {
             width: 100%;
-            box-sizing: border-box;
             padding: 12px;
-            border: 1px solid #cfd5df;
+            border: 1px solid #d0d5dd;
             border-radius: 8px;
             font-size: 15px;
+            margin-bottom: 16px;
         }
+
         button {
             width: 100%;
-            margin-top: 18px;
             padding: 12px;
-            border: 0;
+            border: none;
             border-radius: 8px;
-            background: #1769aa;
+            background: #2563eb;
             color: white;
             font-size: 15px;
+            font-weight: 600;
             cursor: pointer;
         }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
         .error {
-            margin-top: 14px;
+            background: #fef3f2;
+            color: #b42318;
+            border: 1px solid #fecdca;
             padding: 10px;
             border-radius: 8px;
-            background: #fff0f0;
-            color: #b42318;
+            margin-bottom: 16px;
         }
-        .hint {
+
+        .security-note {
+            margin-top: 18px;
+            font-size: 12px;
             color: #667085;
-            font-size: 13px;
+            text-align: center;
         }
+
     </style>
+
 </head>
+
 <body>
-    <main class="login-card">
-        <h1>CloudMart Admin Login</h1>
-        <p class="hint">Enter the admin token stored in AWS Systems Manager Parameter Store.</p>
 
-        <form method="post" action="{{ url_for('login') }}">
-            <label for="admin_token">Admin Token</label>
-            <input
-                id="admin_token"
-                name="admin_token"
-                type="password"
-                autocomplete="current-password"
-                required
-            >
-            <button type="submit">Login</button>
-        </form>
+<div class="login-card">
 
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
-    </main>
+    <h1>CloudMart Admin</h1>
+
+    <p class="subtitle">
+        Enter the administrator token to access
+        the operations dashboard.
+    </p>
+
+    {% if error %}
+
+        <div class="error">
+            {{ error }}
+        </div>
+
+    {% endif %}
+
+    <form
+        method="POST"
+        action="{{ url_for('login') }}"
+    >
+
+        <label for="token">
+            Admin Token
+        </label>
+
+        <input
+            id="token"
+            name="token"
+            type="password"
+            placeholder="Enter admin token"
+            autocomplete="off"
+            required
+        >
+
+        <button type="submit">
+            Login
+        </button>
+
+    </form>
+
+    <div class="security-note">
+        CloudMart RBAC protected dashboard
+    </div>
+
+</div>
+
 </body>
+
 </html>
