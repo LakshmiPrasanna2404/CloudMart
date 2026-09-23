@@ -71,23 +71,15 @@ Resources:
           DB_USERNAME_PARAMETER: !Ref DBUsernameParameter
           DB_PASSWORD_PARAMETER: !Ref DBPasswordParameter
 
-  # One daily EventBridge rule invokes the Lambda twice:
-  # once for the rolling 24-hour report and once for the
-  # current-month-to-date report.
   ReportScheduleRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub cloudmart-${Environment}-reports-daily
+      Name: !Sub cloudmart-${Environment}-daily-report
       ScheduleExpression: !Ref ScheduleExpression
       State: ENABLED
       Targets:
-        - Id: ReportGenerate24HoursTarget
+        - Id: ReportGenerateTarget
           Arn: !GetAtt ReportGenerateFunction.Arn
-          Input: '{"report_type":"last_24_hours"}'
-
-        - Id: ReportGenerateMonthlyTarget
-          Arn: !GetAtt ReportGenerateFunction.Arn
-          Input: '{"report_type":"monthly"}'
 
   AllowEventBridgeInvokeReport:
     Type: AWS::Lambda::Permission
