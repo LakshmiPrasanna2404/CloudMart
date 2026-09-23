@@ -1,14 +1,25 @@
 import os
 import logging
+import hmac
 from datetime import datetime, timezone
 
 import boto3
 import pymysql
 from botocore.exceptions import BotoCoreError, ClientError
-from flask import Flask, render_template
+from flask import Flask, render_template, request, redirect, url_for, session
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+# Dashboard authentication.
+# ADMIN_TOKEN is injected on the EC2 instance from AWS SSM Parameter Store.
+# DASHBOARD_SESSION_SECRET is generated during deployment and stored only on EC2.
+app.config["SECRET_KEY"] = os.getenv("DASHBOARD_SESSION_SECRET", "")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False  # Dashboard currently runs over HTTP.
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 REPORTS_BUCKET = os.getenv("REPORTS_BUCKET", "cloudmart-reports-393476285814")
@@ -22,7 +33,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 CLOUDWATCH_DASHBOARD_URL = os.getenv(
     "CLOUDWATCH_DASHBOARD_URL",
-    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-prod-operations",
+    "https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=cloudmart-operations",
 )
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -136,6 +147,55 @@ def latest_report():
     except (BotoCoreError, ClientError) as error:
         logging.exception("Unable to retrieve latest report: %s", error)
         return None
+
+
+@app.before_request
+def require_admin_login():
+    """Protect the operations dashboard with the admin token."""
+    public_endpoints = {"login", "logout", "health", "static"}
+
+    if request.endpoint in public_endpoints:
+        return None
+
+    if not ADMIN_TOKEN:
+        logging.error("ADMIN_TOKEN is not configured.")
+        return (
+            "Dashboard authentication is not configured. "
+            "Set ADMIN_TOKEN on the EC2 instance.",
+            503,
+        )
+
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("login"))
+
+    return None
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        token = request.form.get("token", "")
+
+        if ADMIN_TOKEN and hmac.compare_digest(token, ADMIN_TOKEN):
+            session.clear()
+            session["admin_authenticated"] = True
+            return redirect(url_for("dashboard"))
+
+        return render_template(
+            "login.html",
+            error="Invalid admin token.",
+        ), 401
+
+    if session.get("admin_authenticated"):
+        return redirect(url_for("dashboard"))
+
+    return render_template("login.html", error=None)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.route("/")
