@@ -1,6 +1,8 @@
 import os
 import logging
 import hashlib
+import csv
+import io
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -10,6 +12,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from flask import (
     Flask,
     render_template,
+    render_template_string,
+    Response,
     request,
     redirect,
     url_for,
@@ -385,73 +389,415 @@ def fetch_orders():
 
 
 # ============================================================
-# REPORT
+# REPORTS
 # ============================================================
 
-def latest_report():
+def list_report_objects(prefix):
+    """
+    List CSV reports under a specific S3 prefix.
+
+    Example prefixes:
+        reports/24hours/
+        reports/monthly/
+    """
+
+    objects = []
 
     try:
+        paginator = s3.get_paginator("list_objects_v2")
 
-        response = s3.list_objects_v2(
+        for page in paginator.paginate(
             Bucket=REPORTS_BUCKET,
-            Prefix=REPORTS_PREFIX,
-        )
+            Prefix=prefix,
+        ):
+            for item in page.get("Contents", []):
+                key = item.get("Key", "")
 
-        objects = response.get(
-            "Contents",
-            [],
-        )
+                if key.lower().endswith(".csv"):
+                    objects.append(item)
 
-        csv_objects = [
-            item
-            for item in objects
-            if item["Key"]
-            .lower()
-            .endswith(".csv")
-        ]
-
-        if not csv_objects:
-            return None
-
-        newest = max(
-            csv_objects,
-            key=lambda item: item["LastModified"],
-        )
-
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={
-                "Bucket": REPORTS_BUCKET,
-                "Key": newest["Key"],
-            },
-            ExpiresIn=900,
-        )
-
-        return {
-            "key": newest["Key"],
-            "size": newest["Size"],
-            "last_modified": (
-                newest["LastModified"]
-                .astimezone(timezone.utc)
-                .strftime(
-                    "%Y-%m-%d %H:%M:%S UTC"
-                )
-            ),
-            "url": url,
-        }
-
-    except (
-        BotoCoreError,
-        ClientError,
-    ) as error:
-
+    except (BotoCoreError, ClientError) as error:
         logging.exception(
-            "Unable to retrieve latest report: %s",
+            "Unable to list reports under %s: %s",
+            prefix,
             error,
         )
+        return []
 
+    return objects
+
+
+def build_report_info(period):
+    """
+    Return the newest S3 report for the requested period.
+
+    period:
+        24h
+        monthly
+    """
+
+    if period == "24h":
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
+        title = "Last 24 Hours"
+    elif period == "monthly":
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+        title = "Monthly"
+    else:
         return None
 
+    objects = list_report_objects(prefix)
+
+    if not objects:
+        return None
+
+    newest = max(
+        objects,
+        key=lambda item: item["LastModified"],
+    )
+
+    key = newest["Key"]
+
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": REPORTS_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=900,
+    )
+
+    return {
+        "period": period,
+        "title": title,
+        "key": key,
+        "size": newest["Size"],
+        "last_modified": (
+            newest["LastModified"]
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%d %H:%M:%S UTC")
+        ),
+        "url": url,
+    }
+
+
+def latest_report():
+    """
+    The dashboard's Latest Report card uses the newest
+    Last-24-Hours report when one exists.
+    """
+
+    return build_report_info("24h")
+
+
+def get_report_object(period):
+    """
+    Return the newest report object for a period.
+    """
+
+    report = build_report_info(period)
+
+    if not report:
+        return None
+
+    try:
+        response = s3.get_object(
+            Bucket=REPORTS_BUCKET,
+            Key=report["key"],
+        )
+
+        return report, response
+
+    except (BotoCoreError, ClientError) as error:
+        logging.exception(
+            "Unable to read report %s from S3: %s",
+            period,
+            error,
+        )
+        return None
+
+
+@app.route("/reports/<period>/view")
+@login_required
+def view_report(period):
+    """
+    Display the selected CSV report inside the dashboard.
+    """
+
+    if period not in {"24h", "monthly"}:
+        return "Report not found", 404
+
+    result = get_report_object(period)
+
+    if not result:
+        return (
+            render_template_string(
+                """
+                <!doctype html>
+                <html>
+                <head>
+                    <title>CloudMart Report</title>
+                    <style>
+                        body {
+                            font-family: Arial, sans-serif;
+                            margin: 40px;
+                            background: #f4f6f9;
+                            color: #172033;
+                        }
+                        .box {
+                            background: white;
+                            padding: 24px;
+                            border-radius: 10px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+                        }
+                        a {
+                            display: inline-block;
+                            margin-top: 16px;
+                            padding: 10px 14px;
+                            background: #2563eb;
+                            color: white;
+                            text-decoration: none;
+                            border-radius: 6px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="box">
+                        <h1>{{ title }} Report</h1>
+                        <p>No report has been generated for this period yet.</p>
+                        <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+                    </div>
+                </body>
+                </html>
+                """,
+                title=(
+                    "Last 24 Hours"
+                    if period == "24h"
+                    else "Monthly"
+                ),
+            ),
+            404,
+        )
+
+    report, response = result
+
+    raw_csv = response["Body"].read().decode(
+        "utf-8",
+        errors="replace",
+    )
+
+    reader = csv.DictReader(
+        io.StringIO(raw_csv)
+    )
+
+    rows = list(reader)
+
+    return render_template_string(
+        """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>CloudMart - {{ report.title }}</title>
+
+            <style>
+                body {
+                    margin: 0;
+                    padding: 24px 6%;
+                    font-family: Arial, sans-serif;
+                    background: #f4f6f9;
+                    color: #172033;
+                }
+
+                .box {
+                    background: white;
+                    border-radius: 10px;
+                    padding: 24px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+                }
+
+                .actions {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    margin: 18px 0;
+                }
+
+                a.button {
+                    display: inline-block;
+                    padding: 10px 14px;
+                    background: #2563eb;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 6px;
+                }
+
+                a.secondary {
+                    background: #475569;
+                }
+
+                .muted {
+                    color: #667085;
+                    font-size: 13px;
+                }
+
+                .table-wrap {
+                    overflow-x: auto;
+                }
+
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    min-width: 650px;
+                }
+
+                th,
+                td {
+                    border-bottom: 1px solid #e5e7eb;
+                    padding: 10px;
+                    text-align: left;
+                    vertical-align: top;
+                    font-size: 14px;
+                }
+
+                th {
+                    background: #eef1f5;
+                }
+
+                .empty {
+                    padding: 20px;
+                    background: #f8fafc;
+                    border-radius: 8px;
+                }
+            </style>
+        </head>
+
+        <body>
+
+            <div class="box">
+
+                <h1>CloudMart {{ report.title }} Report</h1>
+
+                <p class="muted">
+                    File: {{ report.key }}
+                </p>
+
+                <p class="muted">
+                    Last Modified: {{ report.last_modified }}
+                </p>
+
+                <p>
+                    <strong>Orders in report:</strong>
+                    {{ rows|length }}
+                </p>
+
+                <div class="actions">
+                    <a
+                        class="button"
+                        href="{{ url_for('download_report', period=report.period) }}"
+                    >
+                        Download CSV
+                    </a>
+
+                    <a
+                        class="button secondary"
+                        href="{{ url_for('dashboard') }}"
+                    >
+                        Back to Dashboard
+                    </a>
+                </div>
+
+                {% if rows %}
+
+                    <div class="table-wrap">
+
+                        <table>
+
+                            <thead>
+                                <tr>
+                                    {% for key in rows[0].keys() %}
+                                        <th>{{ key }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+
+                            <tbody>
+
+                                {% for row in rows %}
+
+                                    <tr>
+
+                                        {% for value in row.values() %}
+
+                                            <td>
+                                                {{ value if value is not none else "" }}
+                                            </td>
+
+                                        {% endfor %}
+
+                                    </tr>
+
+                                {% endfor %}
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                {% else %}
+
+                    <div class="empty">
+                        No orders were created during this report period.
+                        The report file is still valid and available for download.
+                    </div>
+
+                {% endif %}
+
+            </div>
+
+        </body>
+        </html>
+        """,
+        report=report,
+        rows=rows,
+    )
+
+
+@app.route("/reports/<period>/download")
+@login_required
+def download_report(period):
+    """
+    Download the newest CSV report for the requested period.
+    """
+
+    if period not in {"24h", "monthly"}:
+        return "Report not found", 404
+
+    result = get_report_object(period)
+
+    if not result:
+        return "Report not available yet", 404
+
+    report, response = result
+
+    csv_data = response["Body"].read()
+
+    filename = (
+        "cloudmart-last-24-hours-report.csv"
+        if period == "24h"
+        else "cloudmart-monthly-report.csv"
+    )
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"'
+            )
+        },
+    )
 
 # ============================================================
 # LOGIN
@@ -644,6 +990,8 @@ def dashboard():
             CLOUDWATCH_DASHBOARD_URL
         ),
         report=latest_report(),
+        report_24h=build_report_info("24h"),
+        report_monthly=build_report_info("monthly"),
         errors=errors,
         generated_at=(
             datetime.now(
