@@ -67,7 +67,9 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
-            --parameter-overrides Environment=prod \
+            --parameter-overrides \
+              Environment=prod \
+              DashboardAccessCidr="${{ vars.DASHBOARD_ACCESS_CIDR || '203.0.113.0/32' }}" \
             --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -341,6 +343,7 @@ jobs:
           echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+          echo "ec2_instance_id=$EC2_INSTANCE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Package report Lambda
         shell: bash
@@ -654,6 +657,16 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='RDSEndpoint'].OutputValue | [0]" \
             --output text)
 
+          EC2_INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-app \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
+            --output text)
+
+          if [ -z "$EC2_INSTANCE_ID" ] || [ "$EC2_INSTANCE_ID" = "None" ]; then
+            echo "DashboardInstanceId was not found in cloudmart-app"
+            exit 1
+          fi
+
           echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
@@ -787,6 +800,33 @@ jobs:
 
           base64 -w 0 deploy-dashboard-on-ec2.sh > deploy-dashboard-on-ec2.b64
 
+      - name: Wait for EC2 to register with SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID="${{ steps.values.outputs.ec2_instance_id }}"
+
+          for attempt in {1..30}; do
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --region "$AWS_REGION" \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || true)
+
+            echo "Attempt $attempt: SSM PingStatus=$STATUS"
+
+            if [ "$STATUS" = "Online" ]; then
+              echo "EC2 instance is online in SSM"
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "EC2 instance did not register with SSM in time"
+          exit 1
+
       - name: Deploy dashboard through SSM
         shell: bash
         run: |
@@ -795,7 +835,7 @@ jobs:
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids i-034c3ff52bc25b904 \
+            --instance-ids "${{ steps.values.outputs.ec2_instance_id }}" \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
             --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
@@ -808,7 +848,7 @@ jobs:
           for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
-              --instance-id i-034c3ff52bc25b904 \
+              --instance-id "${{ steps.values.outputs.ec2_instance_id }}" \
               --region "$AWS_REGION" \
               --query "Status" \
               --output text)
@@ -819,7 +859,7 @@ jobs:
               Success)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-034c3ff52bc25b904 \
+                  --instance-id "${{ steps.values.outputs.ec2_instance_id }}" \
                   --region "$AWS_REGION" \
                   --query "StandardOutputContent" \
                   --output text
@@ -828,7 +868,7 @@ jobs:
               Failed|Cancelled|TimedOut|Cancelling)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-034c3ff52bc25b904 \
+                  --instance-id "${{ steps.values.outputs.ec2_instance_id }}" \
                   --region "$AWS_REGION" \
                   --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
