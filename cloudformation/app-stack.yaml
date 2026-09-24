@@ -349,7 +349,11 @@ Resources:
       SecurityGroupIds:
         - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-sg-id
       IamInstanceProfile:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
+        Fn::Select:
+          - 1
+          - Fn::Split:
+              - /
+              - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-dashboard
