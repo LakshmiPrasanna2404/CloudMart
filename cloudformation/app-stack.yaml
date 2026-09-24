@@ -399,10 +399,10 @@ Resources:
               aws sts get-caller-identity --region "$REGION" >/dev/null 2>&1
 
               mkdir -p "$APP_DIR"
-              rm -rf "${APP_DIR:?}"/*
+              rm -rf "$APP_DIR"/*
 
               # Dashboard.zip is uploaded to S3 before cloudmart-app is deployed.
-              aws s3 cp "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip"                 /tmp/dashboard.zip --region "$REGION"
+              aws s3 cp "s3://$ARTIFACTS_BUCKET/dashboard/dashboard.zip"                 /tmp/dashboard.zip --region "$REGION"
 
               unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
 
@@ -410,9 +410,9 @@ Resources:
               "$APP_DIR/venv/bin/pip" install --upgrade pip
               "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 
-              DB_USER=$(aws ssm get-parameter                 --name "/cloudmart/${ENVIRONMENT}/db/username"                 --with-decryption                 --query 'Parameter.Value'                 --output text                 --region "$REGION")
+              DB_USER=$(aws ssm get-parameter                 --name "/cloudmart/$ENVIRONMENT/db/username"                 --with-decryption                 --query 'Parameter.Value'                 --output text                 --region "$REGION")
 
-              DB_PASSWORD=$(aws ssm get-parameter                 --name "/cloudmart/${ENVIRONMENT}/db/password"                 --with-decryption                 --query 'Parameter.Value'                 --output text                 --region "$REGION")
+              DB_PASSWORD=$(aws ssm get-parameter                 --name "/cloudmart/$ENVIRONMENT/db/password"                 --with-decryption                 --query 'Parameter.Value'                 --output text                 --region "$REGION")
 
               cat > /etc/cloudmart-dashboard.env <<ENVFILE
               AWS_REGION=$REGION
