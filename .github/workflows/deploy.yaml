@@ -687,14 +687,16 @@ jobs:
 
           INSTANCE_ID="${{ steps.values.outputs.ec2_instance_id }}"
 
-          for attempt in {1..30}; do
+          # A newly-created EC2 instance can take several minutes to register
+          # with Systems Manager. Allow up to 10 minutes before failing.
+          for attempt in {1..60}; do
             STATUS=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || true)
 
-            echo "Attempt $attempt: SSM PingStatus=$STATUS"
+            echo "Attempt $attempt/60: SSM PingStatus=$STATUS"
 
             if [ "$STATUS" = "Online" ]; then
               echo "EC2 instance is online in SSM"
@@ -704,7 +706,8 @@ jobs:
             sleep 10
           done
 
-          echo "EC2 instance did not register with SSM in time"
+          echo "EC2 instance did not register with SSM within 10 minutes"
+          echo "Instance ID: $INSTANCE_ID"
           exit 1
 
       - name: Package dashboard
