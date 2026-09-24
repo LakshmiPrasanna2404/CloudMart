@@ -354,7 +354,7 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-dashboard
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
           #!/bin/bash
           set -e
           if ! command -v amazon-ssm-agent >/dev/null 2>&1; then
