@@ -67,9 +67,7 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
-            --parameter-overrides \
-              Environment=prod \
-              DashboardAccessCidr="${{ vars.DASHBOARD_ACCESS_CIDR || '203.0.113.0/32' }}" \
+            --parameter-overrides Environment=prod \
             --role-arn "$EXEC_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -317,6 +315,16 @@ jobs:
             --stack-name cloudmart-data \
             --query "Stacks[0].Outputs[?OutputKey=='RDSEndpoint'].OutputValue | [0]" \
             --output text)
+
+          EC2_INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-app \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
+            --output text)
+
+          if [ -z "$EC2_INSTANCE_ID" ] || [ "$EC2_INSTANCE_ID" = "None" ]; then
+            echo "DashboardInstanceId was not found in cloudmart-app"
+            exit 1
+          fi
 
           if [ -z "$DB_HOST" ] || [ "$DB_HOST" = "None" ]; then
             echo "A DB endpoint output was not found in cloudmart-data."
@@ -670,6 +678,34 @@ jobs:
           echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+          echo "ec2_instance_id=$EC2_INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for EC2 to register with SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID="${{ steps.values.outputs.ec2_instance_id }}"
+
+          for attempt in {1..30}; do
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --region "$AWS_REGION" \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || true)
+
+            echo "Attempt $attempt: SSM PingStatus=$STATUS"
+
+            if [ "$STATUS" = "Online" ]; then
+              echo "EC2 instance is online in SSM"
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "EC2 instance did not register with SSM in time"
+          exit 1
 
       - name: Package dashboard
         shell: bash
@@ -799,33 +835,6 @@ jobs:
             deploy-dashboard-on-ec2.sh
 
           base64 -w 0 deploy-dashboard-on-ec2.sh > deploy-dashboard-on-ec2.b64
-
-      - name: Wait for EC2 to register with SSM
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          INSTANCE_ID="${{ steps.values.outputs.ec2_instance_id }}"
-
-          for attempt in {1..30}; do
-            STATUS=$(aws ssm describe-instance-information \
-              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
-              --region "$AWS_REGION" \
-              --query "InstanceInformationList[0].PingStatus" \
-              --output text 2>/dev/null || true)
-
-            echo "Attempt $attempt: SSM PingStatus=$STATUS"
-
-            if [ "$STATUS" = "Online" ]; then
-              echo "EC2 instance is online in SSM"
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          echo "EC2 instance did not register with SSM in time"
-          exit 1
 
       - name: Deploy dashboard through SSM
         shell: bash
