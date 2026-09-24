@@ -422,6 +422,9 @@ Resources:
             Action:
               - sts:AssumeRole
 
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
       Policies:
 
         - PolicyName: EC2DashboardPermissions
@@ -430,6 +433,14 @@ Resources:
             Version: "2012-10-17"
 
             Statement:
+
+              - Sid: ReadDashboardArtifact
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/dashboard/*
+
 
               - Sid: ReadReportsOnly
 
@@ -442,7 +453,7 @@ Resources:
                   !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
 
-              - Sid: ReadDbConfigOnly
+              - Sid: ReadDashboardConfigOnly
 
                 Effect: Allow
 
@@ -451,8 +462,10 @@ Resources:
 
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
-
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
 
 
               - Sid: OwnLogGroupOnly
