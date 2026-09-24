@@ -20,6 +20,16 @@ Parameters:
     Type: String
     Description: Email address to receive low-stock and order confirmation alerts
 
+  DashboardInstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for the CloudMart Flask dashboard
+
+  DashboardAmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0e34b50e714a297f1
+    Description: Amazon Linux AMI used by the CloudMart dashboard EC2 instance in us-east-1
+
 
 Resources:
 
@@ -326,6 +336,33 @@ Resources:
           Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
         S3Key: lambdas/apply-schema.zip
 
+  # ---------- EC2 DASHBOARD ----------
+  # CloudFormation creates the dashboard host. GitHub Actions then
+  # deploys the Flask application to this instance through SSM.
+  DashboardInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref DashboardAmiId
+      InstanceType: !Ref DashboardInstanceType
+      SubnetId:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-public-subnet-id
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-sg-id
+      IamInstanceProfile:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-dashboard-profile-name
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-dashboard
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          if ! command -v amazon-ssm-agent >/dev/null 2>&1; then
+            dnf install -y amazon-ssm-agent
+          fi
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+
 Outputs:
   AuthorizerFunctionUrl:
     Description: Public HTTPS entry point for the CloudMart API
@@ -362,3 +399,13 @@ Outputs:
     Value: !Ref OrderFunction
     Export:
       Name: !Sub cloudmart-${Environment}-order-function-name
+
+  DashboardInstanceId:
+    Description: CloudFormation-created EC2 instance hosting the Flask dashboard
+    Value: !Ref DashboardInstance
+    Export:
+      Name: !Sub cloudmart-${Environment}-dashboard-instance-id
+
+  DashboardPublicIp:
+    Description: Public IPv4 address of the dashboard EC2 instance
+    Value: !GetAtt DashboardInstance.PublicIp
