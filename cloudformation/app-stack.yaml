@@ -183,7 +183,7 @@ Resources:
       Handler: handler.lambda_handler
       Role:
         Fn::ImportValue: !Sub cloudmart-${Environment}-order-role-arn
-      Timeout: 30
+      Timeout: 60
       MemorySize: 512
       VpcConfig:
         SubnetIds:
