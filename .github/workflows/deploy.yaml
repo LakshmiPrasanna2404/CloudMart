@@ -459,17 +459,62 @@ jobs:
             --no-fail-on-empty-changeset
 
       - name: Force report Lambda code update
+        shell: bash
         run: |
           set -euo pipefail
 
-          aws lambda update-function-code \
-            --function-name cloudmart-prod-report-generate \
-            --s3-bucket "${{ steps.outputs.outputs.artifacts_bucket }}" \
-            --s3-key "lambdas/report-generate.zip" \
-            --publish
+          FUNCTION_NAME="cloudmart-prod-report-generate"
+          ARTIFACT_BUCKET="${{ steps.outputs.outputs.artifacts_bucket }}"
+          ARTIFACT_KEY="lambdas/report-generate.zip"
 
-          aws lambda wait function-updated \
-            --function-name cloudmart-prod-report-generate
+          # CloudFormation may still be finishing the Lambda update.
+          # Wait until Lambda reports a successful previous update.
+          for attempt in {1..30}; do
+            UPDATE_STATUS=$(aws lambda get-function               --function-name "$FUNCTION_NAME"               --query "Configuration.LastUpdateStatus"               --output text)
+
+            echo "Lambda LastUpdateStatus: $UPDATE_STATUS (attempt $attempt/30)"
+
+            if [ "$UPDATE_STATUS" = "Successful" ]; then
+              break
+            fi
+
+            if [ "$UPDATE_STATUS" = "Failed" ]; then
+              echo "Previous Lambda update failed."
+              aws lambda get-function                 --function-name "$FUNCTION_NAME"                 --query "Configuration.[State,StateReason,LastUpdateStatus,LastUpdateStatusReason]"                 --output table
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          if [ "$UPDATE_STATUS" != "Successful" ]; then
+            echo "Timed out waiting for the previous Lambda update to finish."
+            exit 1
+          fi
+
+          # Retry because Lambda can briefly remain locked immediately
+          # after CloudFormation reports the stack update.
+          for attempt in {1..12}; do
+            echo "Updating report Lambda code (attempt $attempt/12)..."
+
+            if aws lambda update-function-code               --function-name "$FUNCTION_NAME"               --s3-bucket "$ARTIFACT_BUCKET"               --s3-key "$ARTIFACT_KEY"               --publish; then
+
+              echo "Report Lambda code update started successfully."
+
+              aws lambda wait function-updated                 --function-name "$FUNCTION_NAME"
+
+              echo "Report Lambda code update completed successfully."
+              break
+            fi
+
+            if [ "$attempt" -eq 12 ]; then
+              echo "Report Lambda code update failed after all retries."
+              exit 1
+            fi
+
+            echo "Lambda is still updating. Waiting 5 seconds before retry..."
+            sleep 5
+          done
 
       - name: Deploy monitoring-stack
         run: |
