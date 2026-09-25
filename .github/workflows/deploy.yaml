@@ -89,42 +89,66 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Create SSM parameters if missing
+      - name: Create SSM parameters from GitHub Secrets
         shell: bash
+        env:
+          DB_USERNAME: ${{ secrets.CLOUDMART_DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.CLOUDMART_DB_PASSWORD }}
+          ADMIN_TOKEN: ${{ secrets.CLOUDMART_ADMIN_TOKEN }}
+          PRODUCTS_TOKEN: ${{ secrets.CLOUDMART_PRODUCTS_TOKEN }}
         run: |
           set -euo pipefail
 
-          create_parameter() {
-            local name="$1"
-            local value="$2"
-            local description="$3"
+          if [ -z "$DB_USERNAME" ]; then
+            echo "CLOUDMART_DB_USERNAME GitHub Secret is missing."
+            exit 1
+          fi
+          if [ -z "$DB_PASSWORD" ]; then
+            echo "CLOUDMART_DB_PASSWORD GitHub Secret is missing."
+            exit 1
+          fi
+          if [ -z "$ADMIN_TOKEN" ]; then
+            echo "CLOUDMART_ADMIN_TOKEN GitHub Secret is missing."
+            exit 1
+          fi
+          if [ -z "$PRODUCTS_TOKEN" ]; then
+            echo "CLOUDMART_PRODUCTS_TOKEN GitHub Secret is missing."
+            exit 1
+          fi
 
-            if aws ssm get-parameter               --name "$name"               >/dev/null 2>&1; then
-              echo "Already exists: $name"
-            else
-              aws ssm put-parameter                 --name "$name"                 --type SecureString                 --value "$value"                 --tier Standard                 --description "$description"
+          aws ssm put-parameter \
+            --name "/cloudmart/prod/db/username" \
+            --type SecureString \
+            --value "$DB_USERNAME" \
+            --tier Standard \
+            --description "CloudMart production RDS master username" \
+            --overwrite
 
-              echo "Created: $name"
-            fi
-          }
+          aws ssm put-parameter \
+            --name "/cloudmart/prod/db/password" \
+            --type SecureString \
+            --value "$DB_PASSWORD" \
+            --tier Standard \
+            --description "CloudMart production RDS master password" \
+            --overwrite
 
-          # Database credentials
-          DB_USERNAME="cloudmartadmin"
-          DB_PASSWORD="$(openssl rand -hex 24)"
+          aws ssm put-parameter \
+            --name "/cloudmart/prod/auth/admin-token" \
+            --type SecureString \
+            --value "$ADMIN_TOKEN" \
+            --tier Standard \
+            --description "CloudMart production admin RBAC token" \
+            --overwrite
 
-          create_parameter             "/cloudmart/prod/db/username"             "$DB_USERNAME"             "CloudMart production RDS master username"
+          aws ssm put-parameter \
+            --name "/cloudmart/prod/auth/products-token" \
+            --type SecureString \
+            --value "$PRODUCTS_TOKEN" \
+            --tier Standard \
+            --description "CloudMart production products RBAC token" \
+            --overwrite
 
-          create_parameter             "/cloudmart/prod/db/password"             "$DB_PASSWORD"             "CloudMart production RDS master password"
-
-          # RBAC tokens
-          ADMIN_TOKEN="$(openssl rand -hex 32)"
-          PRODUCTS_TOKEN="$(openssl rand -hex 32)"
-
-          create_parameter             "/cloudmart/prod/auth/admin-token"             "$ADMIN_TOKEN"             "CloudMart production admin RBAC token"
-
-          create_parameter             "/cloudmart/prod/auth/products-token"             "$PRODUCTS_TOKEN"             "CloudMart production products RBAC token"
-
-          echo "SSM bootstrap completed successfully."
+          echo "SSM bootstrap from GitHub Secrets completed successfully."
 
   # ============================================================
   # 3. DATA STACK
