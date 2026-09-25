@@ -658,13 +658,23 @@ jobs:
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
 
-      - name: Package dashboard
+      - name: Install dashboard dependencies on GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dashboard/requirements.txt
+
+          rm -rf dashboard/vendor
+          python3 -m pip install             -r dashboard/requirements.txt             -t dashboard/vendor             --quiet
+
+      - name: Package dashboard with dependencies
         shell: bash
         run: |
           set -euo pipefail
           test -f dashboard/app.py
           test -f dashboard/requirements.txt
           test -f dashboard/templates/index.html
+          test -d dashboard/vendor
 
           rm -f dashboard.zip
           cd dashboard
@@ -691,9 +701,9 @@ jobs:
           DB_HOST="__DB_HOST__"
           APP_DIR="/opt/cloudmart-dashboard"
 
-          # Use software already available on the dashboard EC2.
-          # Do not run dnf/yum/apt here because the instance is intentionally
-          # restricted to the AWS VPC endpoints and has no general Internet egress.
+          # The dashboard EC2 has no general Internet egress.
+          # All Python dependencies are packaged by GitHub Actions and shipped
+          # inside dashboard.zip, so EC2 never runs dnf/yum/apt/pip.
           command -v python3 >/dev/null 2>&1 || { echo "python3 is required but was not found"; exit 1; }
           command -v unzip >/dev/null 2>&1 || { echo "unzip is required but was not found"; exit 1; }
           command -v aws >/dev/null 2>&1 || { echo "aws CLI is required but was not found"; exit 1; }
@@ -703,9 +713,8 @@ jobs:
           rm -rf "${APP_DIR:?}"/*
           unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
 
-          python3 -m venv "$APP_DIR/venv"
-          "$APP_DIR/venv/bin/pip" install --upgrade pip
-          "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+          test -d "$APP_DIR/vendor"
+          test -f "$APP_DIR/app.py"
 
           DB_USER=$(aws ssm get-parameter \
             --name "/cloudmart/prod/db/username" \
@@ -744,7 +753,8 @@ jobs:
           User=root
           WorkingDirectory=$APP_DIR
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=$APP_DIR/venv/bin/gunicorn --workers 2 --bind 0.0.0.0:80 app:app
+          Environment=PYTHONPATH=$APP_DIR/vendor
+          ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --bind 0.0.0.0:80 app:app
           Restart=always
           RestartSec=5
 
