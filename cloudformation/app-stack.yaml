@@ -337,10 +337,8 @@ Resources:
         S3Key: lambdas/apply-schema.zip
 
   # ---------- EC2 DASHBOARD ----------
-  # CloudFormation creates the dashboard host and bootstraps the Flask
-  # application directly from the dashboard artifact already uploaded
-  # to S3 by GitHub Actions. SSM remains available for administration,
-  # but deployment does not wait for SSM registration.
+  # CloudFormation creates the dashboard host. GitHub Actions then
+  # deploys the Flask application to this instance through SSM.
   DashboardInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -366,33 +364,31 @@ Resources:
               #!/bin/bash
               set -euo pipefail
 
-              REGION="${AWS::Region}"
-              ENVIRONMENT="${Environment}"
-              ARTIFACTS_BUCKET="${ArtifactsBucket}"
-              REPORTS_BUCKET="${ReportsBucket}"
-              DB_HOST="${DBHost}"
+              REGION="$AWS_REGION_VALUE"
+              ENVIRONMENT="$ENVIRONMENT_VALUE"
+              ARTIFACTS_BUCKET="$ARTIFACTS_BUCKET_VALUE"
+              REPORTS_BUCKET="$REPORTS_BUCKET_VALUE"
+              DB_HOST="$DB_HOST_VALUE"
               APP_DIR="/opt/cloudmart-dashboard"
 
-              # Make sure SSM remains available for administration, but do not
-              # make SSM registration a dependency of the GitHub deployment.
+              echo "CloudMart dashboard bootstrap started" | tee /var/log/cloudmart-dashboard-bootstrap.log
+
+              # Keep SSM available for administration. It is NOT a deployment dependency.
               if ! command -v amazon-ssm-agent >/dev/null 2>&1; then
                 dnf install -y amazon-ssm-agent || true
               fi
               systemctl enable amazon-ssm-agent || true
               systemctl start amazon-ssm-agent || true
 
-              # Install the packages required to bootstrap the Flask dashboard.
-              if command -v dnf >/dev/null 2>&1; then
-                dnf install -y python3 python3-pip unzip awscli curl
-              elif command -v yum >/dev/null 2>&1; then
-                yum install -y python3 python3-pip unzip awscli curl
-              fi
+              # Install the packages needed by the dashboard.
+              dnf install -y python3 python3-pip python3-devel gcc unzip awscli curl
 
-              # Wait briefly for the instance role credentials to become available.
-              for attempt in {1..30}; do
+              # Wait until the EC2 role credentials are available.
+              for attempt in $(seq 1 30); do
                 if aws sts get-caller-identity --region "$REGION" >/dev/null 2>&1; then
                   break
                 fi
+                echo "Waiting for EC2 IAM credentials: $attempt/30" | tee -a /var/log/cloudmart-dashboard-bootstrap.log
                 sleep 5
               done
 
@@ -401,10 +397,13 @@ Resources:
               mkdir -p "$APP_DIR"
               rm -rf "$APP_DIR"/*
 
-              # Dashboard.zip is uploaded to S3 before cloudmart-app is deployed.
-              aws s3 cp "s3://$ARTIFACTS_BUCKET/dashboard/dashboard.zip"                 /tmp/dashboard.zip --region "$REGION"
+              # GitHub Actions uploads dashboard.zip before cloudmart-app is deployed.
+              aws s3 cp "s3://$ARTIFACTS_BUCKET/dashboard/dashboard.zip"                 /tmp/dashboard.zip                 --region "$REGION"
 
               unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
+
+              test -f "$APP_DIR/app.py"
+              test -f "$APP_DIR/requirements.txt"
 
               python3 -m venv "$APP_DIR/venv"
               "$APP_DIR/venv/bin/pip" install --upgrade pip
@@ -414,7 +413,7 @@ Resources:
 
               DB_PASSWORD=$(aws ssm get-parameter                 --name "/cloudmart/$ENVIRONMENT/db/password"                 --with-decryption                 --query 'Parameter.Value'                 --output text                 --region "$REGION")
 
-              cat > /etc/cloudmart-dashboard.env <<ENVFILE
+              cat > /etc/cloudmart-dashboard.env <<EOF
               AWS_REGION=$REGION
               REPORTS_BUCKET=$REPORTS_BUCKET
               DB_HOST=$DB_HOST
@@ -422,11 +421,11 @@ Resources:
               DB_USER=$DB_USER
               DB_PASSWORD=$DB_PASSWORD
               PORT=80
-              ENVFILE
+              EOF
 
               chmod 600 /etc/cloudmart-dashboard.env
 
-              cat > /etc/systemd/system/cloudmart-dashboard.service <<SERVICE
+              cat > /etc/systemd/system/cloudmart-dashboard.service <<EOF
               [Unit]
               Description=CloudMart Flask Dashboard
               After=network-online.target
@@ -443,29 +442,31 @@ Resources:
 
               [Install]
               WantedBy=multi-user.target
-              SERVICE
+              EOF
 
               systemctl daemon-reload
               systemctl enable cloudmart-dashboard
               systemctl restart cloudmart-dashboard
 
-              # Give Gunicorn a moment to bind to port 80, then verify locally.
-              for attempt in {1..30}; do
-                if curl --fail --silent --show-error --max-time 5                     http://127.0.0.1:80/ >/dev/null; then
-                  echo "CloudMart dashboard is running on port 80"
+              for attempt in $(seq 1 30); do
+                if curl -fsS --max-time 5 http://127.0.0.1:80/ >/dev/null; then
+                  echo "CloudMart dashboard is running on port 80" | tee -a /var/log/cloudmart-dashboard-bootstrap.log
                   exit 0
                 fi
                 sleep 5
               done
 
-              echo "CloudMart dashboard failed to start"
+              echo "CloudMart dashboard did not start" | tee -a /var/log/cloudmart-dashboard-bootstrap.log
+              systemctl status cloudmart-dashboard --no-pager || true
               journalctl -u cloudmart-dashboard --no-pager -n 100 || true
               exit 1
-            - ArtifactsBucket:
+            - AWS_REGION_VALUE: !Ref AWS::Region
+              ENVIRONMENT_VALUE: !Ref Environment
+              ARTIFACTS_BUCKET_VALUE:
                 Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
-              ReportsBucket:
+              REPORTS_BUCKET_VALUE:
                 Fn::ImportValue: !Sub cloudmart-${Environment}-reports-bucket-name
-              DBHost:
+              DB_HOST_VALUE:
                 Fn::ImportValue: !Sub cloudmart-${Environment}-rds-endpoint
 
 Outputs:
