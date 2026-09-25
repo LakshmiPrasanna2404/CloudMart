@@ -337,9 +337,9 @@ Resources:
         S3Key: lambdas/apply-schema.zip
 
   # ---------- EC2 DASHBOARD ----------
-  # CloudFormation creates the dashboard host. GitHub Actions then
-  # deploys the Flask application to this instance through SSM.
-  DashboardInstance:
+  # CloudFormation creates the dashboard host and bootstraps the Flask
+  # dashboard from the S3 artifact uploaded by GitHub Actions.
+  DashboardInstanceV2:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: !Ref DashboardAmiId
@@ -508,10 +508,10 @@ Outputs:
 
   DashboardInstanceId:
     Description: CloudFormation-created EC2 instance hosting the Flask dashboard
-    Value: !Ref DashboardInstance
+    Value: !Ref DashboardInstanceV2
     Export:
       Name: !Sub cloudmart-${Environment}-dashboard-instance-id
 
   DashboardPublicIp:
     Description: Public IPv4 address of the dashboard EC2 instance
-    Value: !GetAtt DashboardInstance.PublicIp
+    Value: !GetAtt DashboardInstanceV2.PublicIp
