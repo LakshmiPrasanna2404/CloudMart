@@ -147,15 +147,15 @@ Resources:
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access to the CloudMart Flask dashboard
+        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: !Ref DashboardAccessCidr
           Description: HTTPS access to the ops dashboard
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Ref DashboardAccessCidr
-          Description: HTTP access to the Flask ops dashboard
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-ec2-sg
@@ -284,16 +284,6 @@ Resources:
       ToPort: 443
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
-
-  EC2EgressToInternetHttps:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: 0.0.0.0/0
-      Description: Allow the dashboard to install updates and dependencies over HTTPS
 
   # =========================
   # S3 GATEWAY ENDPOINT
