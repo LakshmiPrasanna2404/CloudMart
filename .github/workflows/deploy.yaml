@@ -235,7 +235,7 @@ jobs:
           aws s3 cp order.zip "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
           aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
-      - name: Package dashboard
+      - name: Package dashboard before creating EC2
         shell: bash
         run: |
           set -euo pipefail
@@ -249,11 +249,22 @@ jobs:
           zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*'
           cd ..
 
+          echo "Dashboard package created:"
+          ls -lh dashboard.zip
+
       - name: Upload dashboard package before creating EC2
+        shell: bash
         run: |
           set -euo pipefail
 
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks             --stack-name cloudmart-data             --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue"             --output text)
+
+          test -n "$ARTIFACTS_BUCKET"
+          test "$ARTIFACTS_BUCKET" != "None"
+
           aws s3 cp dashboard.zip             "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip"
+
+          echo "Dashboard package uploaded to s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip"
 
       - name: Deploy app-stack
         run: |
@@ -648,8 +659,8 @@ jobs:
 
   # ============================================================
   # 8. VERIFY FLASK DASHBOARD
-  # The EC2 dashboard is bootstrapped by CloudFormation UserData.
-  # No SSM registration wait or SSM deployment command is required.
+  # EC2 UserData installs and starts the dashboard automatically.
+  # SSM remains available for administration but is not used by CI/CD.
   # ============================================================
   deploy-dashboard:
     name: Verify EC2 Flask dashboard
@@ -657,6 +668,9 @@ jobs:
     needs: verify-auth
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -684,7 +698,7 @@ jobs:
           fi
 
           echo "EC2 instance: $EC2_INSTANCE_ID"
-          echo "Dashboard IP: $DASHBOARD_IP"
+          echo "Dashboard public IP: $DASHBOARD_IP"
           echo "ip=$DASHBOARD_IP" >> "$GITHUB_OUTPUT"
 
       - name: Wait for dashboard HTTP endpoint
@@ -694,12 +708,12 @@ jobs:
 
           URL="http://${{ steps.dashboard.outputs.ip }}/"
 
-          # UserData installs Python dependencies and starts Gunicorn.
-          # Poll HTTP directly instead of waiting for SSM.
-          for attempt in {1..36}; do
+          # UserData performs the dashboard installation after EC2 creation.
+          # Check the actual application instead of waiting for SSM.
+          for attempt in $(seq 1 60); do
             STATUS=$(curl -sS -o /dev/null -w "%{http_code}"               --connect-timeout 5               --max-time 10               "$URL" || true)
 
-            echo "Attempt $attempt/36: HTTP status=$STATUS"
+            echo "Attempt $attempt/60: HTTP status=$STATUS"
 
             if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ]; then
               echo "CloudMart dashboard is reachable at $URL"
@@ -709,7 +723,7 @@ jobs:
             sleep 5
           done
 
-          echo "Dashboard did not become reachable within 3 minutes"
-          echo "Instance ID: ${{ steps.dashboard.outputs.ip }}"
+          echo "Dashboard did not become reachable within 5 minutes"
+          echo "Dashboard IP: ${{ steps.dashboard.outputs.ip }}"
           exit 1
 
