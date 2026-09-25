@@ -60,17 +60,26 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy network-stack
+      - name: Verify network-stack is stable
         run: |
           set -euo pipefail
 
-          aws cloudformation deploy \
-            --template-file cloudformation/network-stack.yaml \
+          STATUS=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-network \
-            --parameter-overrides Environment=prod \
-            --role-arn "$EXEC_ROLE" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].StackStatus' \
+            --output text)
+
+          echo "cloudmart-network status: $STATUS"
+
+          if [ "$STATUS" != "UPDATE_ROLLBACK_COMPLETE" ] && \
+             [ "$STATUS" != "CREATE_COMPLETE" ] && \
+             [ "$STATUS" != "UPDATE_COMPLETE" ]; then
+            echo "cloudmart-network is not in a stable state. Stopping before dependent stacks."
+            exit 1
+          fi
+
+          echo "Network stack is stable. No network update is required for this deployment."
 
   # ============================================================
   # 2. DATA STACK
@@ -235,169 +244,19 @@ jobs:
           aws s3 cp order.zip "s3://${ARTIFACTS_BUCKET}/lambdas/order.zip"
           aws s3 cp apply-schema.zip "s3://${ARTIFACTS_BUCKET}/lambdas/apply-schema.zip"
 
-      - name: Deploy app-stack and manage dashboard EC2 through CloudFormation
-        shell: bash
+      - name: Deploy app-stack
         run: |
           set -euo pipefail
 
-          STACK_NAME="cloudmart-app"
-          TEMPLATE="cloudformation/app-stack.yaml"
-          ENVIRONMENT="prod"
-          ALERT_EMAIL="${{ vars.ALERT_EMAIL }}"
-          CHANGE_SET_NAME="import-dashboard-ec2-${GITHUB_RUN_ID}"
-
-          echo "Checking whether DashboardInstance is already managed by CloudFormation..."
-          DASHBOARD_RESOURCE=$(aws cloudformation describe-stack-resources \
-            --stack-name "$STACK_NAME" \
-            --logical-resource-id DashboardInstance \
-            --region "$AWS_REGION" \
-            --query "StackResources[0].PhysicalResourceId" \
-            --output text 2>/dev/null || true)
-
-          if [ -n "$DASHBOARD_RESOURCE" ] && [ "$DASHBOARD_RESOURCE" != "None" ]; then
-            echo "DashboardInstance is already managed by CloudFormation: $DASHBOARD_RESOURCE"
-
-            aws cloudformation deploy \
-              --template-file "$TEMPLATE" \
-              --stack-name "$STACK_NAME" \
-              --parameter-overrides \
-                Environment="$ENVIRONMENT" \
-                AlertEmail="$ALERT_EMAIL" \
-              --role-arn "$EXEC_ROLE" \
-              --capabilities CAPABILITY_NAMED_IAM \
-              --no-fail-on-empty-changeset
-          else
-            echo "DashboardInstance is not yet managed by CloudFormation."
-            echo "Looking for the existing manually-created dashboard EC2 by Name tag..."
-
-            EXISTING_DASHBOARD_ID=$(aws ec2 describe-instances \
-              --filters \
-                "Name=tag:Name,Values=cloudmart-${ENVIRONMENT}-dashboard" \
-                "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-              --region "$AWS_REGION" \
-              --query 'Reservations[].Instances[].InstanceId' \
-              --output text | awk 'NF {print $1}')
-
-            if [ -n "$EXISTING_DASHBOARD_ID" ]; then
-              echo "Found existing dashboard EC2: $EXISTING_DASHBOARD_ID"
-              echo "Creating CloudFormation IMPORT change set..."
-
-              aws cloudformation create-change-set \
-                --stack-name "$STACK_NAME" \
-                --change-set-name "$CHANGE_SET_NAME" \
-                --change-set-type IMPORT \
-                --template-body "file://$TEMPLATE" \
-                --resources-to-import "[{\\\"ResourceType\\":\\\"AWS::EC2::Instance\\",\\\"LogicalResourceId\\":\\\"DashboardInstance\\",\\\"ResourceIdentifier\\":{\\\"InstanceId\\":\\\"$EXISTING_DASHBOARD_ID\\\"}}]" \
-                --parameters \
-                  ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
-                  ParameterKey=AlertEmail,ParameterValue="$ALERT_EMAIL" \
-                --role-arn "$EXEC_ROLE" \
-                --capabilities CAPABILITY_NAMED_IAM \
-                --region "$AWS_REGION"
-
-              echo "Waiting for the import change set..."
-              for attempt in {1..30}; do
-                STATUS=$(aws cloudformation describe-change-set \
-                  --stack-name "$STACK_NAME" \
-                  --change-set-name "$CHANGE_SET_NAME" \
-                  --region "$AWS_REGION" \
-                  --query 'Status' \
-                  --output text 2>/dev/null || true)
-
-                echo "Import change set status: $STATUS"
-
-                case "$STATUS" in
-                  CREATE_COMPLETE)
-                    break
-                    ;;
-                  FAILED)
-                    aws cloudformation describe-change-set \
-                      --stack-name "$STACK_NAME" \
-                      --change-set-name "$CHANGE_SET_NAME" \
-                      --region "$AWS_REGION" \
-                      --query '[Status,StatusReason,Changes]' \
-                      --output json
-                    exit 1
-                    ;;
-                esac
-
-                sleep 5
-              done
-
-              FINAL_STATUS=$(aws cloudformation describe-change-set \
-                --stack-name "$STACK_NAME" \
-                --change-set-name "$CHANGE_SET_NAME" \
-                --region "$AWS_REGION" \
-                --query 'Status' \
-                --output text)
-
-              if [ "$FINAL_STATUS" != "CREATE_COMPLETE" ]; then
-                echo "Import change set did not reach CREATE_COMPLETE: $FINAL_STATUS"
-                aws cloudformation describe-change-set \
-                  --stack-name "$STACK_NAME" \
-                  --change-set-name "$CHANGE_SET_NAME" \
-                  --region "$AWS_REGION" \
-                  --query '[Status,StatusReason]' \
-                  --output table
-                exit 1
-              fi
-
-              echo "Executing CloudFormation import..."
-              aws cloudformation execute-change-set \
-                --stack-name "$STACK_NAME" \
-                --change-set-name "$CHANGE_SET_NAME" \
-                --region "$AWS_REGION"
-
-              echo "Waiting for CloudFormation import to complete..."
-              for attempt in {1..60}; do
-                STACK_STATUS=$(aws cloudformation describe-stacks \
-                  --stack-name "$STACK_NAME" \
-                  --region "$AWS_REGION" \
-                  --query 'Stacks[0].StackStatus' \
-                  --output text)
-
-                echo "Import stack status: $STACK_STATUS"
-
-                case "$STACK_STATUS" in
-                  IMPORT_COMPLETE)
-                    break
-                    ;;
-                  IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|ROLLBACK_FAILED|UPDATE_ROLLBACK_FAILED)
-                    echo "CloudFormation import did not complete successfully."
-                    exit 1
-                    ;;
-                esac
-
-                if [ "$attempt" -eq 60 ]; then
-                  echo "Timed out waiting for CloudFormation import."
-                  exit 1
-                fi
-
-                sleep 5
-              done
-
-              echo "Dashboard EC2 successfully imported into CloudFormation."
-            else
-              echo "No existing manually-created dashboard EC2 was found."
-              echo "CloudFormation will create DashboardInstance as part of the normal stack deployment."
-
-              aws cloudformation deploy \
-                --template-file "$TEMPLATE" \
-                --stack-name "$STACK_NAME" \
-                --parameter-overrides \
-                  Environment="$ENVIRONMENT" \
-                  AlertEmail="$ALERT_EMAIL" \
-                --role-arn "$EXEC_ROLE" \
-                --capabilities CAPABILITY_NAMED_IAM \
-                --no-fail-on-empty-changeset
-            fi
-          fi
-
-          aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].[OutputKey,OutputValue]" \
-            --output table
+          aws cloudformation deploy \
+            --template-file cloudformation/app-stack.yaml \
+            --stack-name cloudmart-app \
+            --parameter-overrides \
+              Environment=prod \
+              AlertEmail="${{ vars.ALERT_EMAIL }}" \
+            --role-arn "$EXEC_ROLE" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
 
       - name: Force Lambda code updates
         shell: bash
@@ -942,48 +801,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          DASHBOARD_INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-app \
-            --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
-            --output text)
-
-          if [ -z "$DASHBOARD_INSTANCE_ID" ] || [ "$DASHBOARD_INSTANCE_ID" = "None" ]; then
-            echo "DashboardInstanceId was not found in cloudmart-app."
-            exit 1
-          fi
-
-          echo "CloudFormation-managed dashboard EC2: $DASHBOARD_INSTANCE_ID"
-
-          echo "Waiting for the CloudFormation-managed EC2 to be SSM Online..."
-          for attempt in {1..30}; do
-            PING_STATUS=$(aws ssm describe-instance-information \
-              --region "$AWS_REGION" \
-              --filters "Key=InstanceIds,Values=$DASHBOARD_INSTANCE_ID" \
-              --query 'InstanceInformationList[0].PingStatus' \
-              --output text 2>/dev/null || true)
-
-            echo "Attempt $attempt: SSM status = $PING_STATUS"
-
-            if [ "$PING_STATUS" = "Online" ]; then
-              break
-            fi
-
-            if [ "$attempt" -eq 30 ]; then
-              echo "EC2 did not become SSM Online within the expected time."
-              exit 1
-            fi
-
-            sleep 10
-          done
-
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$DASHBOARD_INSTANCE_ID" \
+            --instance-ids i-034c3ff52bc25b904 \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
-            --parameters "commands=[\\\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\\\", \\\"chmod +x /tmp/deploy-dashboard-on-ec2.sh\\\", \\\"sudo bash /tmp/deploy-dashboard-on-ec2.sh\\\"]" \
+            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
             --region "$AWS_REGION" \
             --query "Command.CommandId" \
             --output text)
@@ -993,7 +817,7 @@ jobs:
           for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
-              --instance-id "$DASHBOARD_INSTANCE_ID" \
+              --instance-id i-034c3ff52bc25b904 \
               --region "$AWS_REGION" \
               --query "Status" \
               --output text)
@@ -1004,7 +828,7 @@ jobs:
               Success)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id "$DASHBOARD_INSTANCE_ID" \
+                  --instance-id i-034c3ff52bc25b904 \
                   --region "$AWS_REGION" \
                   --query "StandardOutputContent" \
                   --output text
@@ -1013,7 +837,7 @@ jobs:
               Failed|Cancelled|TimedOut|Cancelling)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id "$DASHBOARD_INSTANCE_ID" \
+                  --instance-id i-034c3ff52bc25b904 \
                   --region "$AWS_REGION" \
                   --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
