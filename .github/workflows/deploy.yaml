@@ -73,14 +73,68 @@ jobs:
             --no-fail-on-empty-changeset
 
   # ============================================================
-  # 2. DATA STACK
-  # Existing DB credentials and RBAC tokens are read from SSM.
-  # This workflow does not create or overwrite authentication tokens.
+  # 2. BOOTSTRAP SSM PARAMETERS
+  # Creates DB credentials and RBAC tokens if they do not exist.
+  # Existing values are never overwritten.
+  # ============================================================
+  bootstrap-ssm:
+    name: Bootstrap SSM parameters
+    runs-on: ubuntu-latest
+    needs: deploy-network
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create SSM parameters if missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          create_parameter() {
+            local name="$1"
+            local value="$2"
+            local description="$3"
+
+            if aws ssm get-parameter               --name "$name"               >/dev/null 2>&1; then
+              echo "Already exists: $name"
+            else
+              aws ssm put-parameter                 --name "$name"                 --type SecureString                 --value "$value"                 --tier Standard                 --description "$description"
+
+              echo "Created: $name"
+            fi
+          }
+
+          # Database credentials
+          DB_USERNAME="cloudmartadmin"
+          DB_PASSWORD="$(openssl rand -hex 24)"
+
+          create_parameter             "/cloudmart/prod/db/username"             "$DB_USERNAME"             "CloudMart production RDS master username"
+
+          create_parameter             "/cloudmart/prod/db/password"             "$DB_PASSWORD"             "CloudMart production RDS master password"
+
+          # RBAC tokens
+          ADMIN_TOKEN="$(openssl rand -hex 32)"
+          PRODUCTS_TOKEN="$(openssl rand -hex 32)"
+
+          create_parameter             "/cloudmart/prod/auth/admin-token"             "$ADMIN_TOKEN"             "CloudMart production admin RBAC token"
+
+          create_parameter             "/cloudmart/prod/auth/products-token"             "$PRODUCTS_TOKEN"             "CloudMart production products RBAC token"
+
+          echo "SSM bootstrap completed successfully."
+
+  # ============================================================
+  # 3. DATA STACK
+  # Database credentials and RBAC tokens are guaranteed to exist
+  # before this job starts.
   # ============================================================
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
-    needs: deploy-network
+    needs: bootstrap-ssm
 
     steps:
       - name: Checkout repository
@@ -91,50 +145,6 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      # Bootstrap secrets come from GitHub Actions Secrets.
-      # They are written to SSM only when the SSM parameter is missing.
-      # Existing SSM values are never overwritten.
-      - name: Bootstrap missing SSM secrets
-        shell: bash
-        env:
-          DB_USERNAME: ${{ secrets.CLOUDMART_DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.CLOUDMART_DB_PASSWORD }}
-          ADMIN_TOKEN: ${{ secrets.CLOUDMART_ADMIN_TOKEN }}
-          PRODUCTS_TOKEN: ${{ secrets.CLOUDMART_PRODUCTS_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          put_if_missing() {
-            local name="$1"
-            local type="$2"
-            local value="$3"
-
-            if aws ssm get-parameter --name "$name" >/dev/null 2>&1; then
-              echo "SSM parameter already exists: $name"
-              return 0
-            fi
-
-            if [ -z "$value" ]; then
-              echo "GitHub Actions secret required for missing parameter: $name"
-              exit 1
-            fi
-
-            echo "Creating missing SSM parameter: $name"
-            aws ssm put-parameter \
-              --name "$name" \
-              --type "$type" \
-              --value "$value" \
-              --overwrite false >/dev/null
-          }
-
-          ENVIRONMENT="prod"
-          BASE="/cloudmart/${ENVIRONMENT}"
-
-          put_if_missing "${BASE}/db/username" "String" "$DB_USERNAME"
-          put_if_missing "${BASE}/db/password" "SecureString" "$DB_PASSWORD"
-          put_if_missing "${BASE}/auth/admin-token" "SecureString" "$ADMIN_TOKEN"
-          put_if_missing "${BASE}/auth/products-token" "SecureString" "$PRODUCTS_TOKEN"
 
       - name: Fetch database credentials from SSM
         id: dbcreds
@@ -158,21 +168,6 @@ jobs:
           echo "::add-mask::$PASSWORD"
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
-
-      - name: Verify existing RBAC SSM parameters
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/admin-token" \
-            >/dev/null
-          echo "Verified: /cloudmart/prod/auth/admin-token"
-
-          aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/products-token" \
-            >/dev/null
-          echo "Verified: /cloudmart/prod/auth/products-token"
 
       - name: Deploy data-stack
         run: |
@@ -382,9 +377,17 @@ jobs:
           fi
 
           echo "report_role_arn=$REPORT_ROLE_ARN" >> "$GITHUB_OUTPUT"
+          DASHBOARD_INSTANCE_ID=$(aws cloudformation describe-stacks             --stack-name cloudmart-app             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue"             --output text)
+
+          if [ -z "$DASHBOARD_INSTANCE_ID" ] || [ "$DASHBOARD_INSTANCE_ID" = "None" ]; then
+            echo "DashboardInstanceId was not found in cloudmart-app"
+            exit 1
+          fi
+
           echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+          echo "dashboard_instance_id=$DASHBOARD_INSTANCE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Package report Lambda
         shell: bash
@@ -838,18 +841,8 @@ jobs:
 
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-app \
-            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
-            --output text)
-
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "DashboardInstanceId was not found in cloudmart-app"
-            exit 1
-          fi
-
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
+            --instance-ids "${{ steps.values.outputs.dashboard_instance_id }}" \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
             --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
@@ -862,7 +855,7 @@ jobs:
           for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
+              --instance-id "${{ steps.values.outputs.dashboard_instance_id }}" \
               --region "$AWS_REGION" \
               --query "Status" \
               --output text)
@@ -873,7 +866,7 @@ jobs:
               Success)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id "$INSTANCE_ID" \
+                  --instance-id "${{ steps.values.outputs.dashboard_instance_id }}" \
                   --region "$AWS_REGION" \
                   --query "StandardOutputContent" \
                   --output text
@@ -882,7 +875,7 @@ jobs:
               Failed|Cancelled|TimedOut|Cancelling)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id "$INSTANCE_ID" \
+                  --instance-id "${{ steps.values.outputs.dashboard_instance_id }}" \
                   --region "$AWS_REGION" \
                   --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
