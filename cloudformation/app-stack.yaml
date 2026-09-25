@@ -381,7 +381,7 @@ Resources:
               systemctl start amazon-ssm-agent || true
 
               # Install the packages needed by the dashboard.
-              dnf install -y python3 python3-pip python3-devel gcc unzip awscli
+              dnf install -y python3 python3-pip python3-devel gcc unzip awscli --allowerasing
 
               # Wait until the EC2 role credentials are available.
               for attempt in $(seq 1 30); do
