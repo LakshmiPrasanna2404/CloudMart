@@ -415,8 +415,10 @@ Resources:
 
         Statement:
           - Effect: Allow
+
             Principal:
               Service: ec2.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
@@ -433,37 +435,41 @@ Resources:
             Statement:
 
               - Sid: ReadReportsOnly
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                Resource:
-                  - !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
-              - Sid: ReadDashboardArtifact
                 Effect: Allow
+
                 Action:
                   - s3:GetObject
+
                 Resource:
-                  - !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/dashboard/*
+                  !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
+
 
               - Sid: ReadDbConfigOnly
+
                 Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
-                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
-                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
 
               - Sid: OwnLogGroupOnly
+
                 Effect: Allow
+
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+
                 Resource:
                   !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/cloudmart/${Environment}/dashboard:*
+
 
       Tags:
         - Key: Name
