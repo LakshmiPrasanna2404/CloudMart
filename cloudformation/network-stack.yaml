@@ -3,7 +3,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   CloudMart network-stack — VPC, public and private subnets, internet
   gateway, route tables, all security groups, and VPC Endpoints for
-  SSM, EventBridge, SNS, Lambda, CloudWatch Monitoring, and S3.
+  SSM, SSM Messages, EventBridge, SNS, Lambda, CloudWatch Monitoring, and S3.
   No NAT Gateway is used.
 
 Parameters:
@@ -15,7 +15,7 @@ Parameters:
 
   DashboardAccessCidr:
     Type: String
-    Description: CIDR allowed to reach the EC2 ops dashboard (your IP, not 0.0.0.0/0)
+    Description: CIDR allowed to reach the EC2 ops dashboard
     Default: 203.0.113.0/32
 
 Resources:
@@ -146,11 +146,6 @@ Resources:
       GroupDescription: Security group for the EC2 Flask dashboard
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: HTTP access to the CloudMart Flask dashboard
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
@@ -307,6 +302,22 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # =========================
+  # SSM MESSAGES INTERFACE ENDPOINT
+  # =========================
+
+  SSMMessagesInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
       VpcEndpointType: Interface
       SubnetIds:
         - !Ref PrivateSubnet
