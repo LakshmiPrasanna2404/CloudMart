@@ -73,92 +73,14 @@ jobs:
             --no-fail-on-empty-changeset
 
   # ============================================================
-  # 2. BOOTSTRAP SSM PARAMETERS
-  # Creates DB credentials and RBAC tokens if they do not exist.
-  # Existing values are never overwritten.
-  # ============================================================
-  bootstrap-ssm:
-    name: Bootstrap SSM parameters
-    runs-on: ubuntu-latest
-    needs: deploy-network
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Create SSM parameters from GitHub Secrets
-        shell: bash
-        env:
-          DB_USERNAME: ${{ secrets.CLOUDMART_DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.CLOUDMART_DB_PASSWORD }}
-          ADMIN_TOKEN: ${{ secrets.CLOUDMART_ADMIN_TOKEN }}
-          PRODUCTS_TOKEN: ${{ secrets.CLOUDMART_PRODUCTS_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$DB_USERNAME" ]; then
-            echo "CLOUDMART_DB_USERNAME GitHub Secret is missing."
-            exit 1
-          fi
-          if [ -z "$DB_PASSWORD" ]; then
-            echo "CLOUDMART_DB_PASSWORD GitHub Secret is missing."
-            exit 1
-          fi
-          if [ -z "$ADMIN_TOKEN" ]; then
-            echo "CLOUDMART_ADMIN_TOKEN GitHub Secret is missing."
-            exit 1
-          fi
-          if [ -z "$PRODUCTS_TOKEN" ]; then
-            echo "CLOUDMART_PRODUCTS_TOKEN GitHub Secret is missing."
-            exit 1
-          fi
-
-          aws ssm put-parameter \
-            --name "/cloudmart/prod/db/username" \
-            --type SecureString \
-            --value "$DB_USERNAME" \
-            --tier Standard \
-            --description "CloudMart production RDS master username" \
-            --overwrite
-
-          aws ssm put-parameter \
-            --name "/cloudmart/prod/db/password" \
-            --type SecureString \
-            --value "$DB_PASSWORD" \
-            --tier Standard \
-            --description "CloudMart production RDS master password" \
-            --overwrite
-
-          aws ssm put-parameter \
-            --name "/cloudmart/prod/auth/admin-token" \
-            --type SecureString \
-            --value "$ADMIN_TOKEN" \
-            --tier Standard \
-            --description "CloudMart production admin RBAC token" \
-            --overwrite
-
-          aws ssm put-parameter \
-            --name "/cloudmart/prod/auth/products-token" \
-            --type SecureString \
-            --value "$PRODUCTS_TOKEN" \
-            --tier Standard \
-            --description "CloudMart production products RBAC token" \
-            --overwrite
-
-          echo "SSM bootstrap from GitHub Secrets completed successfully."
-
-  # ============================================================
-  # 3. DATA STACK
-  # Database credentials and RBAC tokens are guaranteed to exist
-  # before this job starts.
+  # 2. DATA STACK
+  # Existing DB credentials and RBAC tokens are read from SSM.
+  # This workflow does not create or overwrite authentication tokens.
   # ============================================================
   deploy-data:
     name: Deploy data-stack
     runs-on: ubuntu-latest
-    needs: bootstrap-ssm
+    needs: deploy-network
 
     steps:
       - name: Checkout repository
@@ -192,6 +114,21 @@ jobs:
           echo "::add-mask::$PASSWORD"
           echo "username=$USERNAME" >> "$GITHUB_OUTPUT"
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+
+      - name: Verify existing RBAC SSM parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/admin-token" \
+            >/dev/null
+          echo "Verified: /cloudmart/prod/auth/admin-token"
+
+          aws ssm get-parameter \
+            --name "/cloudmart/prod/auth/products-token" \
+            >/dev/null
+          echo "Verified: /cloudmart/prod/auth/products-token"
 
       - name: Deploy data-stack
         run: |
@@ -401,17 +338,9 @@ jobs:
           fi
 
           echo "report_role_arn=$REPORT_ROLE_ARN" >> "$GITHUB_OUTPUT"
-          DASHBOARD_INSTANCE_ID=$(aws cloudformation describe-stacks             --stack-name cloudmart-app             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue"             --output text)
-
-          if [ -z "$DASHBOARD_INSTANCE_ID" ] || [ "$DASHBOARD_INSTANCE_ID" = "None" ]; then
-            echo "DashboardInstanceId was not found in cloudmart-app"
-            exit 1
-          fi
-
           echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
-          echo "dashboard_instance_id=$DASHBOARD_INSTANCE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Package report Lambda
         shell: bash
@@ -459,62 +388,17 @@ jobs:
             --no-fail-on-empty-changeset
 
       - name: Force report Lambda code update
-        shell: bash
         run: |
           set -euo pipefail
 
-          FUNCTION_NAME="cloudmart-prod-report-generate"
-          ARTIFACT_BUCKET="${{ steps.outputs.outputs.artifacts_bucket }}"
-          ARTIFACT_KEY="lambdas/report-generate.zip"
+          aws lambda update-function-code \
+            --function-name cloudmart-prod-report-generate \
+            --s3-bucket "${{ steps.outputs.outputs.artifacts_bucket }}" \
+            --s3-key "lambdas/report-generate.zip" \
+            --publish
 
-          # CloudFormation may still be finishing the Lambda update.
-          # Wait until Lambda reports a successful previous update.
-          for attempt in {1..30}; do
-            UPDATE_STATUS=$(aws lambda get-function               --function-name "$FUNCTION_NAME"               --query "Configuration.LastUpdateStatus"               --output text)
-
-            echo "Lambda LastUpdateStatus: $UPDATE_STATUS (attempt $attempt/30)"
-
-            if [ "$UPDATE_STATUS" = "Successful" ]; then
-              break
-            fi
-
-            if [ "$UPDATE_STATUS" = "Failed" ]; then
-              echo "Previous Lambda update failed."
-              aws lambda get-function                 --function-name "$FUNCTION_NAME"                 --query "Configuration.[State,StateReason,LastUpdateStatus,LastUpdateStatusReason]"                 --output table
-              exit 1
-            fi
-
-            sleep 5
-          done
-
-          if [ "$UPDATE_STATUS" != "Successful" ]; then
-            echo "Timed out waiting for the previous Lambda update to finish."
-            exit 1
-          fi
-
-          # Retry because Lambda can briefly remain locked immediately
-          # after CloudFormation reports the stack update.
-          for attempt in {1..12}; do
-            echo "Updating report Lambda code (attempt $attempt/12)..."
-
-            if aws lambda update-function-code               --function-name "$FUNCTION_NAME"               --s3-bucket "$ARTIFACT_BUCKET"               --s3-key "$ARTIFACT_KEY"               --publish; then
-
-              echo "Report Lambda code update started successfully."
-
-              aws lambda wait function-updated                 --function-name "$FUNCTION_NAME"
-
-              echo "Report Lambda code update completed successfully."
-              break
-            fi
-
-            if [ "$attempt" -eq 12 ]; then
-              echo "Report Lambda code update failed after all retries."
-              exit 1
-            fi
-
-            echo "Lambda is still updating. Waiting 5 seconds before retry..."
-            sleep 5
-          done
+          aws lambda wait function-updated \
+            --function-name cloudmart-prod-report-generate
 
       - name: Deploy monitoring-stack
         run: |
@@ -807,19 +691,12 @@ jobs:
           DB_HOST="__DB_HOST__"
           APP_DIR="/opt/cloudmart-dashboard"
 
-          # Install required packages for Amazon Linux or Ubuntu
-          if command -v dnf >/dev/null 2>&1; then
-            dnf install -y python3 python3-pip unzip awscli
-          elif command -v yum >/dev/null 2>&1; then
-            yum install -y python3 python3-pip unzip awscli
-          elif command -v apt-get >/dev/null 2>&1; then
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -y
-            apt-get install -y python3 python3-pip python3-venv unzip awscli
-          else
-            echo "No supported package manager found"
-            exit 1
-          fi
+          # Use software already available on the dashboard EC2.
+          # Do not run dnf/yum/apt here because the instance is intentionally
+          # restricted to the AWS VPC endpoints and has no general Internet egress.
+          command -v python3 >/dev/null 2>&1 || { echo "python3 is required but was not found"; exit 1; }
+          command -v unzip >/dev/null 2>&1 || { echo "unzip is required but was not found"; exit 1; }
+          command -v aws >/dev/null 2>&1 || { echo "aws CLI is required but was not found"; exit 1; }
 
           mkdir -p "$APP_DIR"
           aws s3 cp "s3://${ARTIFACTS_BUCKET}/dashboard/dashboard.zip" /tmp/dashboard.zip --region "$REGION"
@@ -908,7 +785,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Retrieve the CloudFormation-managed dashboard EC2 instance directly.
+          SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
+
           EC2_INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-app \
             --region "$AWS_REGION" \
@@ -921,8 +799,6 @@ jobs:
           fi
 
           echo "Dashboard EC2 instance: $EC2_INSTANCE_ID"
-
-          SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
