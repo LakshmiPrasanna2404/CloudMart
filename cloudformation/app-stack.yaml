@@ -364,11 +364,11 @@ Resources:
               #!/bin/bash
               set -euo pipefail
 
-              REGION="$AWS_REGION_VALUE"
-              ENVIRONMENT="$ENVIRONMENT_VALUE"
-              ARTIFACTS_BUCKET="$ARTIFACTS_BUCKET_VALUE"
-              REPORTS_BUCKET="$REPORTS_BUCKET_VALUE"
-              DB_HOST="$DB_HOST_VALUE"
+              REGION="${AWS_REGION_VALUE}"
+              ENVIRONMENT="${ENVIRONMENT_VALUE}"
+              ARTIFACTS_BUCKET="${ARTIFACTS_BUCKET_VALUE}"
+              REPORTS_BUCKET="${REPORTS_BUCKET_VALUE}"
+              DB_HOST="${DB_HOST_VALUE}"
               APP_DIR="/opt/cloudmart-dashboard"
 
               echo "CloudMart dashboard bootstrap started" | tee /var/log/cloudmart-dashboard-bootstrap.log
