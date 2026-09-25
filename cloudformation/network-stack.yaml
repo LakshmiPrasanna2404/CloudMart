@@ -3,7 +3,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   CloudMart network-stack — VPC, public and private subnets, internet
   gateway, route tables, all security groups, and VPC Endpoints for
-  SSM, SSM Messages, EventBridge, SNS, Lambda, CloudWatch Monitoring, and S3.
+  SSM, EventBridge, SNS, Lambda, CloudWatch Monitoring, and S3.
   No NAT Gateway is used.
 
 Parameters:
@@ -145,30 +145,12 @@ Resources:
     Properties:
       GroupDescription: Security group for the EC2 Flask dashboard
       VpcId: !Ref VPC
-
       SecurityGroupIngress:
-
-        # HTTP - Dashboard
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: HTTP access to the ops dashboard
-
-        # SSH - Administration
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 152.52.164.218/32
-          Description: SSH access for administration
-
-        # HTTPS - Dashboard
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: !Ref DashboardAccessCidr
           Description: HTTPS access to the ops dashboard
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-ec2-sg
@@ -310,6 +292,7 @@ Resources:
       VpcEndpointType: Gateway
       RouteTableIds:
         - !Ref PrivateRouteTable
+        - !Ref PublicRouteTable
 
   # =========================
   # SSM INTERFACE ENDPOINT
@@ -320,22 +303,6 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
-      VpcEndpointType: Interface
-      SubnetIds:
-        - !Ref PrivateSubnet
-      SecurityGroupIds:
-        - !Ref VPCEndpointSecurityGroup
-      PrivateDnsEnabled: true
-
-  # =========================
-  # SSM MESSAGES INTERFACE ENDPOINT
-  # =========================
-
-  SSMMessagesInterfaceEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VPC
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
       VpcEndpointType: Interface
       SubnetIds:
         - !Ref PrivateSubnet
