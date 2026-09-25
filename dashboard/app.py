@@ -105,19 +105,105 @@ SESSION_TIMEOUT_MINUTES = int(
     )
 )
 
-# Flask secret key.
+# ============================================================
+# FLASK SESSION SECRET
+# ============================================================
 #
-# Recommended:
-# Set FLASK_SECRET_KEY in the EC2 environment.
+# The Flask secret key must be identical for all Gunicorn
+# workers. Otherwise, one worker may not be able to validate
+# a session created by another worker.
 #
-# The fallback is generated when the application starts.
-# This means active sessions will expire after an application restart.
+# If FLASK_SECRET_KEY is supplied through the environment,
+# use it.
+#
+# If it is not supplied, create one once and persist it on
+# the EC2 instance so that all workers and future application
+# restarts use the same key.
+# ============================================================
+
 FLASK_SECRET_KEY = os.getenv(
     "FLASK_SECRET_KEY"
 )
 
+FLASK_SECRET_FILE = (
+    "/etc/cloudmart-dashboard-secret"
+)
+
 if not FLASK_SECRET_KEY:
-    FLASK_SECRET_KEY = os.urandom(32).hex()
+
+    try:
+
+        # Reuse an existing persistent secret.
+        if os.path.exists(
+            FLASK_SECRET_FILE
+        ):
+
+            with open(
+                FLASK_SECRET_FILE,
+                "r",
+                encoding="utf-8",
+            ) as secret_file:
+
+                FLASK_SECRET_KEY = (
+                    secret_file.read().strip()
+                )
+
+        # Generate and persist a secret only when one
+        # does not already exist.
+        if not FLASK_SECRET_KEY:
+
+            FLASK_SECRET_KEY = (
+                os.urandom(32).hex()
+            )
+
+            try:
+
+                with open(
+                    FLASK_SECRET_FILE,
+                    "x",
+                    encoding="utf-8",
+                ) as secret_file:
+
+                    secret_file.write(
+                        FLASK_SECRET_KEY
+                    )
+
+                os.chmod(
+                    FLASK_SECRET_FILE,
+                    0o600,
+                )
+
+            except FileExistsError:
+
+                # Another Gunicorn worker may have created
+                # the file at the same time. Read that
+                # already-created value instead.
+                with open(
+                    FLASK_SECRET_FILE,
+                    "r",
+                    encoding="utf-8",
+                ) as secret_file:
+
+                    FLASK_SECRET_KEY = (
+                        secret_file.read().strip()
+                    )
+
+    except OSError as error:
+
+        logging.exception(
+            "Unable to initialize persistent Flask secret: %s",
+            error,
+        )
+
+        raise RuntimeError(
+            "Unable to initialize dashboard session secret."
+        )
+
+if not FLASK_SECRET_KEY:
+
+    raise RuntimeError(
+        "Flask secret key is empty."
+    )
 
 app.secret_key = FLASK_SECRET_KEY
 
@@ -155,7 +241,6 @@ ssm = boto3.client(
     region_name=AWS_REGION,
 )
 
-
 # ============================================================
 # ADMIN TOKEN
 # ============================================================
@@ -167,6 +252,7 @@ def get_admin_token():
     """
 
     try:
+
         response = ssm.get_parameter(
             Name=ADMIN_TOKEN_PARAMETER,
             WithDecryption=True,
@@ -175,6 +261,7 @@ def get_admin_token():
         token = response["Parameter"]["Value"]
 
         if not token:
+
             raise RuntimeError(
                 "Admin token parameter is empty."
             )
@@ -182,6 +269,7 @@ def get_admin_token():
         return token
 
     except (BotoCoreError, ClientError) as error:
+
         logging.exception(
             "Unable to retrieve admin token from SSM: %s",
             error,
@@ -198,7 +286,9 @@ def is_authenticated():
     has successfully authenticated.
     """
 
-    return session.get("admin_authenticated") is True
+    return session.get(
+        "admin_authenticated"
+    ) is True
 
 
 # ============================================================
@@ -218,6 +308,7 @@ def login_required(view_function):
     def wrapped_view(*args, **kwargs):
 
         if not is_authenticated():
+
             return redirect(
                 url_for(
                     "login",
@@ -238,6 +329,7 @@ def login_required(view_function):
 # ============================================================
 
 def database_configured():
+
     return all(
         [
             DB_HOST,
@@ -289,6 +381,7 @@ def fetch_table_rows(
     }
 
     if table_name not in allowed_tables:
+
         raise ValueError(
             "Unsupported table"
         )
@@ -298,6 +391,7 @@ def fetch_table_rows(
     )
 
     if order_by:
+
         query += (
             f" ORDER BY `{order_by}` DESC"
         )
@@ -404,24 +498,40 @@ def list_report_objects(prefix):
     objects = []
 
     try:
-        paginator = s3.get_paginator("list_objects_v2")
+
+        paginator = s3.get_paginator(
+            "list_objects_v2"
+        )
 
         for page in paginator.paginate(
             Bucket=REPORTS_BUCKET,
             Prefix=prefix,
         ):
-            for item in page.get("Contents", []):
-                key = item.get("Key", "")
 
-                if key.lower().endswith(".csv"):
+            for item in page.get(
+                "Contents",
+                [],
+            ):
+
+                key = item.get(
+                    "Key",
+                    "",
+                )
+
+                if key.lower().endswith(
+                    ".csv"
+                ):
+
                     objects.append(item)
 
     except (BotoCoreError, ClientError) as error:
+
         logging.exception(
             "Unable to list reports under %s: %s",
             prefix,
             error,
         )
+
         return []
 
     return objects
@@ -437,17 +547,31 @@ def build_report_info(period):
     """
 
     if period == "24h":
-        prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
+
+        prefix = (
+            f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
+        )
+
         title = "Last 24 Hours"
+
     elif period == "monthly":
-        prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+
+        prefix = (
+            f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+        )
+
         title = "Monthly"
+
     else:
+
         return None
 
-    objects = list_report_objects(prefix)
+    objects = list_report_objects(
+        prefix
+    )
 
     if not objects:
+
         return None
 
     newest = max(
@@ -474,7 +598,9 @@ def build_report_info(period):
         "last_modified": (
             newest["LastModified"]
             .astimezone(timezone.utc)
-            .strftime("%Y-%m-%d %H:%M:%S UTC")
+            .strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            )
         ),
         "url": url,
     }
@@ -486,7 +612,9 @@ def latest_report():
     Last-24-Hours report when one exists.
     """
 
-    return build_report_info("24h")
+    return build_report_info(
+        "24h"
+    )
 
 
 def get_report_object(period):
@@ -494,12 +622,16 @@ def get_report_object(period):
     Return the newest report object for a period.
     """
 
-    report = build_report_info(period)
+    report = build_report_info(
+        period
+    )
 
     if not report:
+
         return None
 
     try:
+
         response = s3.get_object(
             Bucket=REPORTS_BUCKET,
             Key=report["key"],
@@ -508,27 +640,38 @@ def get_report_object(period):
         return report, response
 
     except (BotoCoreError, ClientError) as error:
+
         logging.exception(
             "Unable to read report %s from S3: %s",
             period,
             error,
         )
+
         return None
 
 
-@app.route("/reports/<period>/view")
+@app.route(
+    "/reports/<period>/view"
+)
 @login_required
 def view_report(period):
     """
     Display the selected CSV report inside the dashboard.
     """
 
-    if period not in {"24h", "monthly"}:
+    if period not in {
+        "24h",
+        "monthly",
+    }:
+
         return "Report not found", 404
 
-    result = get_report_object(period)
+    result = get_report_object(
+        period
+    )
 
     if not result:
+
         return (
             render_template_string(
                 """
@@ -543,12 +686,14 @@ def view_report(period):
                             background: #f4f6f9;
                             color: #172033;
                         }
+
                         .box {
                             background: white;
                             padding: 24px;
                             border-radius: 10px;
                             box-shadow: 0 2px 8px rgba(0,0,0,.08);
                         }
+
                         a {
                             display: inline-block;
                             margin-top: 16px;
@@ -560,12 +705,28 @@ def view_report(period):
                         }
                     </style>
                 </head>
+
                 <body>
+
                     <div class="box">
-                        <h1>{{ title }} Report</h1>
-                        <p>No report has been generated for this period yet.</p>
-                        <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+
+                        <h1>
+                            {{ title }} Report
+                        </h1>
+
+                        <p>
+                            No report has been generated
+                            for this period yet.
+                        </p>
+
+                        <a
+                            href="{{ url_for('dashboard') }}"
+                        >
+                            Back to Dashboard
+                        </a>
+
                     </div>
+
                 </body>
                 </html>
                 """,
@@ -580,7 +741,9 @@ def view_report(period):
 
     report, response = result
 
-    raw_csv = response["Body"].read().decode(
+    raw_csv = response[
+        "Body"
+    ].read().decode(
         "utf-8",
         errors="replace",
     )
@@ -594,13 +757,24 @@ def view_report(period):
     return render_template_string(
         """
         <!doctype html>
+
         <html>
+
         <head>
+
             <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>CloudMart - {{ report.title }}</title>
+
+            <meta
+                name="viewport"
+                content="width=device-width, initial-scale=1"
+            >
+
+            <title>
+                CloudMart - {{ report.title }}
+            </title>
 
             <style>
+
                 body {
                     margin: 0;
                     padding: 24px 6%;
@@ -669,32 +843,44 @@ def view_report(period):
                     background: #f8fafc;
                     border-radius: 8px;
                 }
+
             </style>
+
         </head>
 
         <body>
 
             <div class="box">
 
-                <h1>CloudMart {{ report.title }} Report</h1>
+                <h1>
+                    CloudMart {{ report.title }} Report
+                </h1>
 
                 <p class="muted">
                     File: {{ report.key }}
                 </p>
 
                 <p class="muted">
-                    Last Modified: {{ report.last_modified }}
+                    Last Modified:
+                    {{ report.last_modified }}
                 </p>
 
                 <p>
-                    <strong>Orders in report:</strong>
+                    <strong>
+                        Orders in report:
+                    </strong>
+
                     {{ rows|length }}
                 </p>
 
                 <div class="actions">
+
                     <a
                         class="button"
-                        href="{{ url_for('download_report', period=report.period) }}"
+                        href="{{ url_for(
+                            'download_report',
+                            period=report.period
+                        ) }}"
                     >
                         Download CSV
                     </a>
@@ -705,6 +891,7 @@ def view_report(period):
                     >
                         Back to Dashboard
                     </a>
+
                 </div>
 
                 {% if rows %}
@@ -714,11 +901,19 @@ def view_report(period):
                         <table>
 
                             <thead>
+
                                 <tr>
+
                                     {% for key in rows[0].keys() %}
-                                        <th>{{ key }}</th>
+
+                                        <th>
+                                            {{ key }}
+                                        </th>
+
                                     {% endfor %}
+
                                 </tr>
+
                             </thead>
 
                             <tbody>
@@ -730,7 +925,11 @@ def view_report(period):
                                         {% for value in row.values() %}
 
                                             <td>
-                                                {{ value if value is not none else "" }}
+                                                {{
+                                                    value
+                                                    if value is not none
+                                                    else ""
+                                                }}
                                             </td>
 
                                         {% endfor %}
@@ -748,8 +947,13 @@ def view_report(period):
                 {% else %}
 
                     <div class="empty">
-                        No orders were created during this report period.
-                        The report file is still valid and available for download.
+
+                        No orders were created during
+                        this report period.
+
+                        The report file is still valid
+                        and available for download.
+
                     </div>
 
                 {% endif %}
@@ -757,6 +961,7 @@ def view_report(period):
             </div>
 
         </body>
+
         </html>
         """,
         report=report,
@@ -764,24 +969,38 @@ def view_report(period):
     )
 
 
-@app.route("/reports/<period>/download")
+@app.route(
+    "/reports/<period>/download"
+)
 @login_required
 def download_report(period):
     """
     Download the newest CSV report for the requested period.
     """
 
-    if period not in {"24h", "monthly"}:
+    if period not in {
+        "24h",
+        "monthly",
+    }:
+
         return "Report not found", 404
 
-    result = get_report_object(period)
+    result = get_report_object(
+        period
+    )
 
     if not result:
-        return "Report not available yet", 404
+
+        return (
+            "Report not available yet",
+            404,
+        )
 
     report, response = result
 
-    csv_data = response["Body"].read()
+    csv_data = response[
+        "Body"
+    ].read()
 
     filename = (
         "cloudmart-last-24-hours-report.csv"
@@ -798,6 +1017,7 @@ def download_report(period):
             )
         },
     )
+
 
 # ============================================================
 # LOGIN
@@ -830,7 +1050,9 @@ def login():
 
         if not submitted_token:
 
-            error = "Please enter the admin token."
+            error = (
+                "Please enter the admin token."
+            )
 
         else:
 
@@ -853,9 +1075,13 @@ def login():
 
                     session.permanent = True
 
-                    session["admin_authenticated"] = True
+                    session[
+                        "admin_authenticated"
+                    ] = True
 
-                    session["login_time"] = (
+                    session[
+                        "login_time"
+                    ] = (
                         datetime.now(
                             timezone.utc
                         ).isoformat()
@@ -873,6 +1099,7 @@ def login():
                         next_url
                         and next_url.startswith("/")
                     ):
+
                         return redirect(
                             next_url
                         )
@@ -990,8 +1217,12 @@ def dashboard():
             CLOUDWATCH_DASHBOARD_URL
         ),
         report=latest_report(),
-        report_24h=build_report_info("24h"),
-        report_monthly=build_report_info("monthly"),
+        report_24h=build_report_info(
+            "24h"
+        ),
+        report_monthly=build_report_info(
+            "monthly"
+        ),
         errors=errors,
         generated_at=(
             datetime.now(
