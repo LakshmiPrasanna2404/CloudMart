@@ -69,8 +69,10 @@ Resources:
 
   ReportsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
-      BucketName: !Sub cloudmart-reports-${AWS::AccountId}
+      BucketName: !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
