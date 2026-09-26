@@ -53,6 +53,12 @@ Resources:
               # ------------------------------------------------
               # APPLICATION AUTHENTICATION TOKENS
               # ------------------------------------------------
+              # Admin and product-service credentials are stored
+              # in SSM Parameter Store.
+              #
+              # Customer credentials are NOT stored here.
+              # Customer credentials are stored in RDS login_access.
+              # ------------------------------------------------
 
               - Sid: ReadApplicationAuthTokens
 
@@ -69,6 +75,13 @@ Resources:
 
               # ------------------------------------------------
               # DATABASE CREDENTIALS
+              # ------------------------------------------------
+              # Authorizer needs DB access to:
+              #
+              # 1. Register customers
+              # 2. Authenticate customers
+              # 3. Read login_access
+              # 4. Determine customer_id
               # ------------------------------------------------
 
               - Sid: ReadDatabaseCredentials
@@ -87,6 +100,9 @@ Resources:
               # ------------------------------------------------
               # INVOKE DOWNSTREAM LAMBDAS
               # ------------------------------------------------
+              # Authorizer is the API entry point and routes
+              # authorized requests to Product and Order Lambda.
+              # ------------------------------------------------
 
               - Sid: InvokeDownstreamLambdas
 
@@ -102,7 +118,7 @@ Resources:
 
 
               # ------------------------------------------------
-              # AUTHORIZER CLOUDWATCH LOGS
+              # AUTHORIzER CLOUDWATCH LOGS
               # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
@@ -292,6 +308,16 @@ Resources:
                   !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-${Environment}-low-stock-alerts
 
 
+              - Sid: SendCustomerOrderEmail
+
+                Effect: Allow
+
+                Action:
+                  - ses:SendEmail
+
+                Resource: "*"
+
+
               - Sid: OwnLogGroupOnly
 
                 Effect: Allow
@@ -406,9 +432,6 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-
       Policies:
 
         - PolicyName: EC2DashboardPermissions
@@ -417,10 +440,6 @@ Resources:
             Version: "2012-10-17"
 
             Statement:
-
-              # ------------------------------------------------
-              # READ GENERATED REPORTS
-              # ------------------------------------------------
 
               - Sid: ReadReportsOnly
 
@@ -432,29 +451,6 @@ Resources:
                 Resource:
                   !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
-
-              # ------------------------------------------------
-              # READ DASHBOARD DEPLOYMENT PACKAGE
-              # ------------------------------------------------
-              # GitHub Actions uploads dashboard.zip to the
-              # artifacts bucket before the dashboard deployment.
-              # EC2 only needs permission to download this exact
-              # object.
-
-              - Sid: ReadDashboardArtifactOnly
-
-                Effect: Allow
-
-                Action:
-                  - s3:GetObject
-
-                Resource:
-                  !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/dashboard/dashboard.zip
-
-
-              # ------------------------------------------------
-              # READ DATABASE CONFIGURATION
-              # ------------------------------------------------
 
               - Sid: ReadDbConfigOnly
 
@@ -468,10 +464,6 @@ Resources:
 
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-
-              # ------------------------------------------------
-              # DASHBOARD CLOUDWATCH LOGS
-              # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
 
