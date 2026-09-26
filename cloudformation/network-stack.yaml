@@ -280,6 +280,16 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
+  EC2EgressToS3:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: pl-63a5400a
+      Description: Allow the dashboard to reach the S3 Gateway Endpoint
+
   # =========================
   # S3 GATEWAY ENDPOINT
   # =========================
