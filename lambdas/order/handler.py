@@ -38,6 +38,11 @@ cloudwatch = boto3.client(
     config=aws_config
 )
 
+ses = boto3.client(
+    "ses",
+    config=aws_config
+)
+
 
 # ============================================================
 # ENVIRONMENT
@@ -62,6 +67,11 @@ DB_HOST = os.environ.get(
 DB_NAME = os.environ.get(
     "DB_NAME",
     "cloudmart"
+)
+
+
+FROM_EMAIL = os.environ.get(
+    "FROM_EMAIL"
 )
 
 
@@ -180,6 +190,31 @@ def get_connection():
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False
     )
+
+
+# ============================================================
+# CUSTOMER EMAIL
+# ============================================================
+
+def get_customer_email(cur, customer_id):
+
+    cur.execute(
+        """
+        SELECT email
+        FROM customers
+        WHERE customer_id = %s
+        """,
+        (
+            customer_id,
+        )
+    )
+
+    customer = cur.fetchone()
+
+    if not customer:
+        return None
+
+    return customer.get("email")
 
 
 # ============================================================
@@ -316,6 +351,78 @@ def publish_metric(metric_name, dimensions=None):
             metric=metric_name,
             error=str(exc)
         )
+
+
+# ============================================================
+# CUSTOMER EMAIL
+# ============================================================
+
+def send_customer_email(
+    customer_email,
+    subject,
+    body,
+    customer_id=None,
+    order_id=None
+):
+
+    if not customer_email:
+        log(
+            "ERROR",
+            "Customer email missing; email not sent",
+            customer_id=customer_id,
+            order_id=order_id
+        )
+        return False
+
+    if not FROM_EMAIL:
+        log(
+            "ERROR",
+            "FROM_EMAIL is not configured; email not sent",
+            customer_id=customer_id,
+            order_id=order_id
+        )
+        return False
+
+    try:
+        result = ses.send_email(
+            Source=FROM_EMAIL,
+            Destination={
+                "ToAddresses": [customer_email]
+            },
+            Message={
+                "Subject": {
+                    "Data": subject,
+                    "Charset": "UTF-8"
+                },
+                "Body": {
+                    "Text": {
+                        "Data": body,
+                        "Charset": "UTF-8"
+                    }
+                }
+            }
+        )
+
+        log(
+            "INFO",
+            "Customer order email sent",
+            customer_email=customer_email,
+            customer_id=customer_id,
+            order_id=order_id,
+            message_id=result.get("MessageId")
+        )
+        return True
+
+    except Exception as exc:
+        log(
+            "ERROR",
+            "Customer order email failed",
+            customer_email=customer_email,
+            customer_id=customer_id,
+            order_id=order_id,
+            error=str(exc)
+        )
+        return False
 
 
 # ============================================================
@@ -456,11 +563,28 @@ def place_order(
 
 
     conn = None
+    customer_email = None
 
 
     try:
 
         conn = get_connection()
+
+        with conn.cursor() as cur:
+            customer_email = get_customer_email(
+                cur,
+                customer_id
+            )
+
+        if not customer_email:
+            conn.rollback()
+            return response(
+                404,
+                {
+                    "error": "customer_not_found",
+                    "message": "Customer email not found"
+                }
+            )
 
         total_amount = 0
 
@@ -500,6 +624,32 @@ def place_order(
 
                     conn.rollback()
 
+                    publish_order_event(
+                        "OrderFailed",
+                        None,
+                        customer_id,
+                        "FAILED",
+                        {
+                            "reason": "PRODUCT_NOT_FOUND",
+                            "productId": item["product_id"],
+                            "customerEmail": customer_email
+                        }
+                    )
+
+                    send_customer_email(
+                        customer_email=customer_email,
+                        subject=f"CloudMart Order Failed - Customer #{customer_id}",
+                        body=(
+                            "Hello,\n\n"
+                            "Your CloudMart order could not be completed.\n\n"
+                            f"Customer ID: {customer_id}\n"
+                            "Reason: The requested product was not found.\n\n"
+                            "Please try again or contact CloudMart support if the problem continues.\n\n"
+                            "CloudMart Team"
+                        ),
+                        customer_id=customer_id
+                    )
+
                     return response(
                         404,
                         {
@@ -518,6 +668,32 @@ def place_order(
                 ]:
 
                     conn.rollback()
+
+                    publish_order_event(
+                        "OrderFailed",
+                        None,
+                        customer_id,
+                        "FAILED",
+                        {
+                            "reason": "PRODUCT_INACTIVE",
+                            "productId": item["product_id"],
+                            "customerEmail": customer_email
+                        }
+                    )
+
+                    send_customer_email(
+                        customer_email=customer_email,
+                        subject=f"CloudMart Order Failed - Customer #{customer_id}",
+                        body=(
+                            "Hello,\n\n"
+                            "Your CloudMart order could not be completed.\n\n"
+                            f"Customer ID: {customer_id}\n"
+                            "Reason: The requested product is inactive.\n\n"
+                            "Please try again or contact CloudMart support if the problem continues.\n\n"
+                            "CloudMart Team"
+                        ),
+                        customer_id=customer_id
+                    )
 
                     return response(
                         409,
@@ -542,6 +718,33 @@ def place_order(
                 ] < quantity:
 
                     conn.rollback()
+
+                    publish_order_event(
+                        "OrderFailed",
+                        None,
+                        customer_id,
+                        "FAILED",
+                        {
+                            "reason": "INSUFFICIENT_STOCK",
+                            "productId": item["product_id"],
+                            "availableStock": product["stock_count"],
+                            "customerEmail": customer_email
+                        }
+                    )
+
+                    send_customer_email(
+                        customer_email=customer_email,
+                        subject=f"CloudMart Order Failed - Customer #{customer_id}",
+                        body=(
+                            "Hello,\n\n"
+                            "Your CloudMart order could not be completed.\n\n"
+                            f"Customer ID: {customer_id}\n"
+                            "Reason: There is not enough stock to complete your order.\n\n"
+                            "Please try again or contact CloudMart support if the problem continues.\n\n"
+                            "CloudMart Team"
+                        ),
+                        customer_id=customer_id
+                    )
 
                     return response(
                         409,
@@ -760,7 +963,9 @@ def place_order(
             "PENDING",
             {
                 "totalAmount":
-                    float(total_amount)
+                    float(total_amount),
+                "customerEmail":
+                    customer_email
             }
         )
 
@@ -772,8 +977,25 @@ def place_order(
             "CONFIRMED",
             {
                 "totalAmount":
-                    float(total_amount)
+                    float(total_amount),
+                "customerEmail":
+                    customer_email
             }
+        )
+
+        send_customer_email(
+            customer_email=customer_email,
+            subject=f"CloudMart Order Confirmation - Order #{order_id}",
+            body=(
+                "Hello,\n\n"
+                f"Your CloudMart order #{order_id} has been confirmed.\n\n"
+                f"Customer ID: {customer_id}\n"
+                f"Total amount: ${float(total_amount):.2f}\n\n"
+                "Thank you for shopping with CloudMart.\n\n"
+                "CloudMart Team"
+            ),
+            customer_id=customer_id,
+            order_id=order_id
         )
 
         publish_metric(
@@ -852,8 +1074,23 @@ def place_order(
             customer_id,
             "FAILED",
             {
-                "reason": "DB_ERROR"
+                "reason": "DB_ERROR",
+                "customerEmail": customer_email
             }
+        )
+
+        send_customer_email(
+            customer_email=customer_email,
+            subject=f"CloudMart Order Failed - Customer #{customer_id}",
+            body=(
+                "Hello,\n\n"
+                "Your CloudMart order could not be completed.\n\n"
+                f"Customer ID: {customer_id}\n"
+                "Reason: A database error occurred while processing your order.\n\n"
+                "Please try again or contact CloudMart support if the problem continues.\n\n"
+                "CloudMart Team"
+            ),
+            customer_id=customer_id
         )
 
         publish_metric(
@@ -895,8 +1132,23 @@ def place_order(
             customer_id,
             "FAILED",
             {
-                "reason": "INTERNAL_ERROR"
+                "reason": "INTERNAL_ERROR",
+                "customerEmail": customer_email
             }
+        )
+
+        send_customer_email(
+            customer_email=customer_email,
+            subject=f"CloudMart Order Failed - Customer #{customer_id}",
+            body=(
+                "Hello,\n\n"
+                "Your CloudMart order could not be completed.\n\n"
+                f"Customer ID: {customer_id}\n"
+                "Reason: An internal error occurred while processing your order.\n\n"
+                "Please try again or contact CloudMart support if the problem continues.\n\n"
+                "CloudMart Team"
+            ),
+            customer_id=customer_id
         )
 
         publish_metric(
@@ -1404,13 +1656,6 @@ def cancel_order(
             }
         )
 
-        # Publish CloudWatch metric for successful cancellations
-        publish_metric(
-            "OrdersCancelled",
-            {
-                "Environment": ENVIRONMENT
-            }
-        )
 
         for item in restored_items:
 
