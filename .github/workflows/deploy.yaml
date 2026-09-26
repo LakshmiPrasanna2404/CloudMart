@@ -795,7 +795,7 @@ jobs:
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids i-034c3ff52bc25b904 \
+            --instance-ids i-0e17d466382559abd \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
             --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
@@ -808,7 +808,7 @@ jobs:
           for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
-              --instance-id i-034c3ff52bc25b904 \
+              --instance-id i-0e17d466382559abd \
               --region "$AWS_REGION" \
               --query "Status" \
               --output text)
@@ -819,7 +819,7 @@ jobs:
               Success)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-034c3ff52bc25b904 \
+                  --instance-id i-0e17d466382559abd \
                   --region "$AWS_REGION" \
                   --query "StandardOutputContent" \
                   --output text
@@ -828,7 +828,7 @@ jobs:
               Failed|Cancelled|TimedOut|Cancelling)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-034c3ff52bc25b904 \
+                  --instance-id i-0e17d466382559abd \
                   --region "$AWS_REGION" \
                   --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
