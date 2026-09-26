@@ -311,6 +311,22 @@ Resources:
       PrivateDnsEnabled: true
 
   # =========================
+  # SSM MESSAGES INTERFACE ENDPOINT
+  # =========================
+
+  SSMMessagesInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # =========================
   # EVENTBRIDGE INTERFACE ENDPOINT
   # =========================
 
