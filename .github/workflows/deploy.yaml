@@ -801,8 +801,36 @@ jobs:
           systemctl daemon-reload
           systemctl enable cloudmart-dashboard
           systemctl restart cloudmart-dashboard
-          systemctl --no-pager --full status cloudmart-dashboard
-          ss -tlnp | grep ':80'
+
+          echo "Waiting for CloudMart dashboard to become healthy..."
+
+          for attempt in {1..30}; do
+            if systemctl is-active --quiet cloudmart-dashboard; then
+              HTTP_CODE=$(curl -sS \
+                --max-time 10 \
+                -o /dev/null \
+                -w "%{http_code}" \
+                http://127.0.0.1/ || true)
+
+              echo "Attempt $attempt: service=active HTTP=$HTTP_CODE"
+
+              case "$HTTP_CODE" in
+                200|301|302|303|307|308)
+                  echo "CloudMart dashboard health check passed."
+                  exit 0
+                  ;;
+              esac
+            else
+              echo "Attempt $attempt: dashboard service is not active yet."
+            fi
+
+            sleep 2
+          done
+
+          echo "CloudMart dashboard failed health check."
+          systemctl --no-pager --full status cloudmart-dashboard || true
+          journalctl -u cloudmart-dashboard -n 50 --no-pager || true
+          exit 1
           SCRIPT
 
           sed -i \
