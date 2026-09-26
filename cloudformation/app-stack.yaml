@@ -20,15 +20,6 @@ Parameters:
     Type: String
     Description: Email address to receive low-stock and order confirmation alerts
 
-  DashboardInstanceType:
-    Type: String
-    Default: t3.micro
-    Description: EC2 instance type for the CloudMart dashboard
-
-  DashboardAmiId:
-    Type: AWS::EC2::Image::Id
-    Default: ami-0e34b50e714a297f1
-    Description: Amazon Linux 2023 AMI used by the CloudMart dashboard
 
 Resources:
 
@@ -207,11 +198,15 @@ Resources:
           DB_NAME: cloudmart
           EVENT_BUS_NAME: !Ref CloudMartEventBus
           LOW_STOCK_THRESHOLD: !Ref LowStockThreshold
+          FROM_EMAIL: !Ref AlertEmail
       Code:
         S3Bucket:
           Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
         S3Key: lambdas/order.zip
 
+
+  # Receives OrderConfirmed / OrderFailed events and sends the email
+  # to the customerEmail contained in the EventBridge event.
   # ---------- EVENTBRIDGE RULE: low stock → SNS TOPIC ----------
   # InputTransformer rewrites the raw event JSON into a plain-text
   # message before SNS ever sees it — the email reads like a sentence,
@@ -239,29 +234,6 @@ Resources:
               "CloudMart Low Stock Alert: Product ID <productId> now has
               only <stockCount> units remaining. Please restock soon."
 
-  # ---------- EVENTBRIDGE RULE: order confirmed → SNS TOPIC ----------
-  OrderConfirmedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-confirmed-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderConfirmed"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderConfirmationsTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-              totalAmount: "$.detail.totalAmount"
-            InputTemplate: >-
-              "CloudMart Order Confirmation: Your order #<orderId> has
-              been confirmed. Total amount: $<totalAmount>. Thank you
-              for shopping with CloudMart, customer #<customerId>!"
-
   # ---------- EVENTBRIDGE RULE: order cancelled → SNS TOPIC ----------
   OrderCancelledRule:
     Type: AWS::Events::Rule
@@ -284,30 +256,6 @@ Resources:
               "CloudMart Order Cancelled: Order #<orderId> for customer
               #<customerId> was cancelled from status <previousStatus>.
               Inventory has been restored."
-
-  # ---------- EVENTBRIDGE RULE: order failed → SNS TOPIC ----------
-  # Reuses the same order-confirmations topic so ops sees both outcomes
-  # in one place; the message text makes clear which is which.
-  OrderFailedRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-failed-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderFailed"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderFailedTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-            InputTemplate: >-
-              "CloudMart Order Failed: Order #<orderId> for customer
-              #<customerId> could not be completed. Please check the
-              order history for details."
 
   # ---------- One-time schema apply ----------
   ApplySchemaFunction:
@@ -335,41 +283,7 @@ Resources:
           Fn::ImportValue: !Sub cloudmart-${Environment}-artifacts-bucket-name
         S3Key: lambdas/apply-schema.zip
 
-  # ---------- EC2 DASHBOARD ----------
-  # CloudFormation manages the dashboard EC2 instance.
-  # The existing manually-created instance is imported once by the workflow.
-  DashboardInstance:
-    Type: AWS::EC2::Instance
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      InstanceType: !Ref DashboardInstanceType
-      ImageId: !Ref DashboardAmiId
-      SubnetId:
-        Fn::ImportValue: !Sub cloudmart-${Environment}-public-subnet-id
-      SecurityGroupIds:
-        - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-sg-id
-      IamInstanceProfile:
-        Fn::Select:
-          - 1
-          - Fn::Split:
-              - /
-              - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
-      Tags:
-        - Key: Name
-          Value: !Sub cloudmart-${Environment}-dashboard
-
 Outputs:
-  DashboardInstanceId:
-    Description: CloudFormation-managed EC2 instance ID for the CloudMart dashboard
-    Value: !Ref DashboardInstance
-    Export:
-      Name: !Sub cloudmart-${Environment}-dashboard-instance-id
-
-  DashboardPublicIp:
-    Description: Public IP address of the CloudMart dashboard EC2 instance
-    Value: !GetAtt DashboardInstance.PublicIp
-
   AuthorizerFunctionUrl:
     Description: Public HTTPS entry point for the CloudMart API
     Value: !GetAtt AuthorizerFunctionUrl.FunctionUrl
@@ -405,3 +319,4 @@ Outputs:
     Value: !Ref OrderFunction
     Export:
       Name: !Sub cloudmart-${Environment}-order-function-name
+
