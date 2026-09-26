@@ -789,7 +789,8 @@ jobs:
           User=root
           WorkingDirectory=$APP_DIR
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=$APP_DIR/venv/bin/gunicorn --workers 2 --bind 0.0.0.0:80 app:app
+          Environment="PYTHONPATH=$APP_DIR/vendor"
+          ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --bind 0.0.0.0:80 app:app
           Restart=always
           RestartSec=5
 
