@@ -308,16 +308,6 @@ Resources:
                   !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-${Environment}-low-stock-alerts
 
 
-              - Sid: SendCustomerOrderEmail
-
-                Effect: Allow
-
-                Action:
-                  - ses:SendEmail
-
-                Resource: "*"
-
-
               - Sid: OwnLogGroupOnly
 
                 Effect: Allow
@@ -432,6 +422,9 @@ Resources:
             Action:
               - sts:AssumeRole
 
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
       Policies:
 
         - PolicyName: EC2DashboardPermissions
@@ -452,6 +445,17 @@ Resources:
                   !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
 
+              - Sid: ReadDashboardArtifact
+
+                Effect: Allow
+
+                Action:
+                  - s3:GetObject
+
+                Resource:
+                  !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/dashboard/dashboard.zip
+
+
               - Sid: ReadDbConfigOnly
 
                 Effect: Allow
@@ -463,6 +467,10 @@ Resources:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
               - Sid: OwnLogGroupOnly
