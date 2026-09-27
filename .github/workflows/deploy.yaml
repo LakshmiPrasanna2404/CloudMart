@@ -666,6 +666,9 @@ jobs:
           test -f dashboard/requirements.txt
           test -f dashboard/templates/index.html
 
+          rm -rf dashboard/vendor
+          python -m pip install -r dashboard/requirements.txt -t dashboard/vendor --quiet
+
           rm -f dashboard.zip
           cd dashboard
           zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*'
