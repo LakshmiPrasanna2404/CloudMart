@@ -84,13 +84,19 @@ def get_connection():
 
 
 # ============================================================
-# GENERATE LAST 24 HOURS REPORT
+# GENERATE PREVIOUS CALENDAR DAY REPORT
 # ============================================================
 
 def generate_report():
     """
     Generate a CSV containing only orders created
-    during the previous 24 hours.
+    during the previous calendar day.
+
+    Example:
+
+        26-Sep 00:00 UTC
+                ->
+        27-Sep 00:00 UTC
 
     The report is uploaded to:
 
@@ -100,15 +106,24 @@ def generate_report():
     """
 
     # --------------------------------------------------------
-    # Calculate the 24-hour time window
+    # Calculate the previous calendar-day time window
     # --------------------------------------------------------
 
-    end_time = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
 
-    start_time = end_time - timedelta(hours=24)
+    # Start of today at 00:00 UTC
+    end_time = now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0
+    )
+
+    # Start of the previous day at 00:00 UTC
+    start_time = end_time - timedelta(days=1)
 
     logger.info(
-        "Generating last 24 hours report: %s -> %s",
+        "Generating previous calendar day report: %s -> %s",
         start_time.isoformat(),
         end_time.isoformat()
     )
@@ -119,7 +134,7 @@ def generate_report():
     #
     # IMPORTANT:
     # The WHERE clause restricts the report to the
-    # previous 24 hours.
+    # previous calendar day.
     # --------------------------------------------------------
 
     query = """
@@ -235,7 +250,7 @@ def generate_report():
     #
     # Example:
     #
-    # reports/24hours/orders-24hours-2026-09-24T10-43-00Z.csv
+    # reports/24hours/orders-24hours-2026-09-27T00-00-00Z.csv
     # --------------------------------------------------------
 
     key = (
@@ -262,7 +277,7 @@ def generate_report():
     # --------------------------------------------------------
 
     logger.info(
-        "Last 24 hours report uploaded successfully: "
+        "Previous calendar day report uploaded successfully: "
         "s3://%s/%s",
         REPORTS_BUCKET,
         key
@@ -297,7 +312,7 @@ def lambda_handler(event, context):
     """
 
     logger.info(
-        "Starting CloudMart last-24-hours report generation."
+        "Starting CloudMart previous-calendar-day report generation."
     )
 
     logger.info(
@@ -326,7 +341,7 @@ def lambda_handler(event, context):
             "body": json.dumps(
                 {
                     "message": (
-                        "Last 24 hours report "
+                        "Previous calendar day report "
                         "generated successfully"
                     ),
 
@@ -339,7 +354,7 @@ def lambda_handler(event, context):
     except Exception:
 
         logger.exception(
-            "Last 24 hours report generation failed"
+            "Previous calendar day report generation failed"
         )
 
         raise
