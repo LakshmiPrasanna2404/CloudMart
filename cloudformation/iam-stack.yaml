@@ -53,12 +53,6 @@ Resources:
               # ------------------------------------------------
               # APPLICATION AUTHENTICATION TOKENS
               # ------------------------------------------------
-              # Admin and product-service credentials are stored
-              # in SSM Parameter Store.
-              #
-              # Customer credentials are NOT stored here.
-              # Customer credentials are stored in RDS login_access.
-              # ------------------------------------------------
 
               - Sid: ReadApplicationAuthTokens
 
@@ -75,13 +69,6 @@ Resources:
 
               # ------------------------------------------------
               # DATABASE CREDENTIALS
-              # ------------------------------------------------
-              # Authorizer needs DB access to:
-              #
-              # 1. Register customers
-              # 2. Authenticate customers
-              # 3. Read login_access
-              # 4. Determine customer_id
               # ------------------------------------------------
 
               - Sid: ReadDatabaseCredentials
@@ -100,9 +87,6 @@ Resources:
               # ------------------------------------------------
               # INVOKE DOWNSTREAM LAMBDAS
               # ------------------------------------------------
-              # Authorizer is the API entry point and routes
-              # authorized requests to Product and Order Lambda.
-              # ------------------------------------------------
 
               - Sid: InvokeDownstreamLambdas
 
@@ -115,6 +99,24 @@ Resources:
                   - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cloudmart-${Environment}-product
 
                   - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cloudmart-${Environment}-order
+
+
+              # ------------------------------------------------
+              # SES CUSTOMER EMAIL VERIFICATION
+              # ------------------------------------------------
+              # When a new customer registers, the Authorizer
+              # automatically requests SES verification.
+              # SES sends the verification email to the customer.
+              # ------------------------------------------------
+
+              - Sid: VerifyCustomerEmail
+
+                Effect: Allow
+
+                Action:
+                  - ses:VerifyEmailIdentity
+
+                Resource: "*"
 
 
               # ------------------------------------------------
@@ -308,6 +310,20 @@ Resources:
                   !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-${Environment}-low-stock-alerts
 
 
+              # ------------------------------------------------
+              # SES CUSTOMER ORDER CONFIRMATION EMAILS
+              # ------------------------------------------------
+
+              - Sid: AllowSESSendEmail
+
+                Effect: Allow
+
+                Action:
+                  - ses:SendEmail
+
+                Resource: "*"
+
+
               - Sid: OwnLogGroupOnly
 
                 Effect: Allow
@@ -422,6 +438,7 @@ Resources:
             Action:
               - sts:AssumeRole
 
+      # Required for SSM Session Manager / Run Command
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
@@ -444,6 +461,10 @@ Resources:
                 Resource:
                   !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
+
+              # ------------------------------------------------
+              # DASHBOARD DEPLOYMENT ARTIFACT
+              # ------------------------------------------------
 
               - Sid: ReadDashboardArtifact
 
