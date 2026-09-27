@@ -31,6 +31,12 @@ lambda_client = boto3.client(
     config=aws_config,
 )
 
+ses_client = boto3.client(
+    "ses",
+    region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    config=aws_config,
+)
+
 
 # ============================================================
 # ENVIRONMENT VARIABLES
@@ -707,6 +713,30 @@ def register_customer(event):
             )
 
             connection.commit()
+
+            # Automatically request SES verification for a newly
+            # registered customer. Registration remains successful
+            # even if the SES verification request itself fails.
+            try:
+                ses_client.verify_email_identity(
+                    EmailAddress=email
+                )
+
+                log(
+                    "INFO",
+                    "SES verification email requested",
+                    email=email,
+                    customer_id=customer_id,
+                )
+
+            except Exception as error:
+                log(
+                    "ERROR",
+                    "SES verification request failed",
+                    email=email,
+                    customer_id=customer_id,
+                    error=str(error),
+                )
 
             return json_response(
                 201,
