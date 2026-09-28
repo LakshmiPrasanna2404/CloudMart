@@ -1,8 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  CloudMart iam-stack — execution roles for the Authorizer, Product, Order,
-  and Report Generate Lambdas, plus the EC2 dashboard instance role.
+  CloudMart iam-stack — CloudFormation execution, GitHub Actions deployment, Lambda,
+  and EC2 dashboard IAM roles.
+  The CloudMartProject role is assumed by GitHub Actions through OIDC, while
+  CloudMartCFNExecutionRole is assumed by CloudFormation.
   Every role is scoped to the specific actions and resource ARNs
   that the function needs.
 
@@ -15,6 +17,363 @@ Parameters:
 
 
 Resources:
+
+
+  # ============================================================
+  # CLOUDFORMATION EXECUTION ROLE
+  # ============================================================
+
+  CloudMartCFNExecutionRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+      RoleName: CloudMartCFNExecutionRole
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationAssumeRole
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+
+        - PolicyName: AllowInstanceProfileManagement
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:GetInstanceProfile
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:instance-profile/cloudmart-*
+
+        - PolicyName: AllowRDSServiceLinkedRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource:
+                  - arn:aws:iam::*:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS*
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: rds.amazonaws.com
+
+        - PolicyName: CloudMartCFNExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: NetworkResources
+                Effect: Allow
+                Action:
+                  - ec2:*
+                Resource: "*"
+
+              - Sid: DataResources
+                Effect: Allow
+                Action:
+                  - rds:*
+                  - s3:*
+                Resource: "*"
+
+              - Sid: IamResources
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-*
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/CloudMartCFNExecutionRole
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/CloudMartProject
+
+              - Sid: AppResources
+                Effect: Allow
+                Action:
+                  - lambda:*
+                  - events:*
+                  - sns:*
+                  - logs:*
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: "*"
+
+              - Sid: MonitoringResources
+                Effect: Allow
+                Action:
+                  - cloudwatch:*
+                Resource: "*"
+
+        - PolicyName: CloudMartSecretsManagerProvisioning
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ManageCloudMartAuthSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DeleteSecret
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:TagResource
+                  - secretsmanager:UntagResource
+                  - secretsmanager:GetRandomPassword
+                Resource: "*"
+
+        - PolicyName: CloudMartUpdateRoleTrustPolicies
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: UpdateCloudMartRoleTrustPolicies
+                Effect: Allow
+                Action:
+                  - iam:UpdateAssumeRolePolicy
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-${Environment}-authorizer-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-${Environment}-product-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-${Environment}-order-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-${Environment}-report-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cloudmart-${Environment}-ec2-dashboard-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/CloudMartCFNExecutionRole
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/CloudMartProject
+
+      Tags:
+        - Key: Name
+          Value: CloudMartCFNExecutionRole
+
+
+  # ============================================================
+  # GITHUB ACTIONS DEPLOYMENT ROLE
+  # ============================================================
+
+  CloudMartProjectRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+      RoleName: CloudMartProject
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:LakshmiPrasanna2404/CloudMart:ref:refs/heads/main
+
+      Policies:
+
+        - PolicyName: AllowCfnValidate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+
+        - PolicyName: AllowInvokeCloudMartLambdas
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:aws:lambda:*:${AWS::AccountId}:function:cloudmart-*
+
+        - PolicyName: AllowReadCloudMartLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !Sub arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-*
+
+        - PolicyName: AllowSSMFetch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:*:${AWS::AccountId}:parameter/cloudmart/*
+
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource:
+                  - !Sub arn:aws:kms:*:${AWS::AccountId}:key/*
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+
+        - PolicyName: AllowUpdateLambdaCode
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                Resource:
+                  - !Sub arn:aws:lambda:*:${AWS::AccountId}:function:cloudmart-*
+
+        - PolicyName: CloudMartDashboardDeployment
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DeployDashboardThroughSSM
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+                  - arn:aws:ec2:us-east-1:393476285814:instance/i-034c3ff52bc25b904
+
+              - Sid: ReadSSMCommandResult
+                Effect: Allow
+                Action:
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - ssm:ListCommands
+                Resource: "*"
+
+        - PolicyName: CloudMartDashboardSSMDeploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DeployDashboardThroughSSM
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+                  - arn:aws:ec2:us-east-1:393476285814:instance/i-0e17d466382559abd
+
+              - Sid: ReadDashboardSSMCommandResult
+                Effect: Allow
+                Action:
+                  - ssm:GetCommandInvocation
+                Resource: "*"
+
+        - PolicyName: CloudMartDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormationAccess
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ListChangeSets
+                  - cloudformation:GetTemplateSummary
+                Resource:
+                  - !Sub arn:aws:cloudformation:*:${AWS::AccountId}:stack/cloudmart-*/*
+
+              - Sid: PassExecutionRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/CloudMartCFNExecutionRole
+
+              - Sid: ArtifactsBucketAccess
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}
+                  - !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/*
+
+        - PolicyName: CloudMartGitHubRBACParameterAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ManageCloudMartRBACTokens
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/auth/admin-token
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/auth/products-token
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/auth/customers-token
+
+        - PolicyName: CloudMartGitHubReadRBACSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadCloudMartRBACTokens
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:cloudmart-prod-auth-admin-token-*
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:cloudmart-prod-auth-products-token-*
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:cloudmart-prod-auth-orders-token-*
+
+        - PolicyName: CloudMartSSMParameterWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteCloudMartSSMParameters
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/db/username
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/db/password
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/auth/admin-token
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/prod/auth/products-token
+
+      Tags:
+        - Key: Name
+          Value: CloudMartProject
+
 
   # ============================================================
   # AUTHORIZER EXECUTION ROLE
@@ -561,3 +920,15 @@ Outputs:
     Value: !GetAtt EC2DashboardInstanceProfile.Arn
     Export:
       Name: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
+
+
+  CloudMartCFNExecutionRoleArn:
+    Value: !GetAtt CloudMartCFNExecutionRole.Arn
+    Export:
+      Name: CloudMartCFNExecutionRoleArn
+
+
+  CloudMartProjectRoleArn:
+    Value: !GetAtt CloudMartProjectRole.Arn
+    Export:
+      Name: CloudMartProjectRoleArn
