@@ -1664,6 +1664,18 @@ def cancel_order(
                 item["new_stock"]
             )
 
+        # --------------------------------------------------------
+        # CLOUDWATCH METRIC
+        # --------------------------------------------------------
+        # Publish one OrdersCancelled metric after the cancellation
+        # has been committed successfully.
+        publish_metric(
+            "OrdersCancelled",
+            {
+                "Environment": ENVIRONMENT
+            }
+        )
+
 
         return response(
             200,
