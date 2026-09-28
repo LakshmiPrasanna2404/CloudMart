@@ -109,9 +109,23 @@
             border-radius: 6px;
         }
 
+        a.button:hover {
+            background: #1d4ed8;
+        }
+
         .muted {
             color: #667085;
             font-size: 13px;
+        }
+
+        .status-cancelled {
+            color: #b42318;
+            font-weight: bold;
+        }
+
+        .empty-message {
+            color: #667085;
+            padding: 10px 0;
         }
     </style>
 </head>
@@ -119,6 +133,7 @@
 <body>
 
 <header>
+
     <h1>CloudMart Operations Dashboard</h1>
 
     <div class="muted" style="color: #d4d9e2;">
@@ -126,106 +141,219 @@
     </div>
 
     <nav aria-label="Dashboard navigation">
-        <a href="#inventory">Inventory</a>
-        <a href="#orders">Orders</a>
-        <a href="#failed-orders">Failed Orders</a>
-        <a href="#reports">Reports</a>
-        <a href="{{ cloudwatch_dashboard_url }}" target="_blank" rel="noopener noreferrer">
+
+        <a href="#inventory">
+            Inventory
+        </a>
+
+        <a href="#orders">
+            Orders
+        </a>
+
+        <a href="#cancelled-orders">
+            Cancelled Orders
+        </a>
+
+        <a href="#reports">
+            Reports
+        </a>
+
+        <a
+            href="{{ cloudwatch_dashboard_url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+        >
             CloudWatch Monitoring ↗
         </a>
 
         <a href="{{ url_for('logout') }}">
             Logout
         </a>
+
     </nav>
+
 </header>
 
+
 <main>
+
+    <!-- Generated Time -->
 
     <p class="muted">
         Generated: {{ generated_at }}
     </p>
 
+
     <!-- Error Messages -->
+
     {% for error in errors %}
+
         <div class="error">
             {{ error }}
         </div>
+
     {% endfor %}
 
-    <!-- Summary Cards -->
+
+    <!-- ========================================================= -->
+    <!-- SUMMARY CARDS -->
+    <!-- ========================================================= -->
+
     <div class="cards">
 
+        <!-- Products -->
+
         <div class="card">
-            <div>Products Loaded</div>
+
+            <div>
+                Products Loaded
+            </div>
 
             <div class="number">
                 {{ products|length }}
             </div>
+
         </div>
 
+
+        <!-- Recent Orders -->
+
         <div class="card">
-            <div>Recent Orders Loaded</div>
+
+            <div>
+                Recent Orders Loaded
+            </div>
 
             <div class="number">
                 {{ orders|length }}
             </div>
+
         </div>
 
+
+        <!-- Cancelled Orders -->
+
         <div class="card">
-            <div>Failed Orders</div>
+
+            <div>
+                Cancelled Orders
+            </div>
 
             <div class="number">
-                {{ failed_orders|length }}
+
+                {% set cancelled_count = namespace(value=0) %}
+
+                {% for row in orders %}
+
+                    {% if row.get('status') == 'CANCELLED' %}
+
+                        {% set cancelled_count.value =
+                            cancelled_count.value + 1 %}
+
+                    {% endif %}
+
+                {% endfor %}
+
+                {{ cancelled_count.value }}
+
             </div>
+
         </div>
 
+
+        <!-- Latest Report -->
+
         <div class="card">
-            <div>Latest Report</div>
+
+            <div>
+                Latest Report
+            </div>
 
             <div class="number">
                 {{ "Available" if report else "None" }}
             </div>
+
         </div>
 
     </div>
 
-    <!-- Reports -->
+
+    <!-- ========================================================= -->
+    <!-- REPORTS -->
+    <!-- ========================================================= -->
+
     <section id="reports">
 
-        <h2>Reports</h2>
+        <h2>
+            Reports
+        </h2>
 
         <p class="muted">
             Reports are generated automatically and stored securely in S3.
             Revenue is included inside every CSV report.
         </p>
 
+
         <!-- Last 24 Hours -->
-        <h3>Last 24 Hours</h3>
+
+        <h3>
+            Last 24 Hours
+        </h3>
+
 
         {% if report_24h %}
 
             <p>
-                <strong>Status:</strong>
+
+                <strong>
+                    Status:
+                </strong>
+
                 Report available
+
             </p>
 
+
             <p>
-                <strong>File:</strong>
+
+                <strong>
+                    File:
+                </strong>
+
                 {{ report_24h.key }}
+
             </p>
 
+
             <p>
-                <strong>Last Modified:</strong>
+
+                <strong>
+                    Last Modified:
+                </strong>
+
                 {{ report_24h.last_modified }}
+
             </p>
+
 
             <p>
-                <strong>Size:</strong>
+
+                <strong>
+                    Size:
+                </strong>
+
                 {{ report_24h.size }} bytes
+
             </p>
 
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+
+            <div
+                style="
+                    display:flex;
+                    gap:10px;
+                    flex-wrap:wrap;
+                "
+            >
 
                 <a
                     class="button"
@@ -233,6 +361,7 @@
                 >
                     View Report
                 </a>
+
 
                 <a
                     class="button"
@@ -243,9 +372,10 @@
 
             </div>
 
+
         {% else %}
 
-            <p>
+            <p class="empty-message">
                 No Last 24 Hours report is available yet.
             </p>
 
@@ -253,10 +383,17 @@
 
     </section>
 
-    <!-- Product Inventory -->
+
+    <!-- ========================================================= -->
+    <!-- PRODUCT INVENTORY -->
+    <!-- ========================================================= -->
+
     <section id="inventory">
 
-        <h2>Current Product Inventory</h2>
+        <h2>
+            Current Product Inventory
+        </h2>
+
 
         {% if products %}
 
@@ -265,12 +402,21 @@
                 <table>
 
                     <thead>
+
                         <tr>
+
                             {% for key in products[0].keys() %}
-                                <th>{{ key }}</th>
+
+                                <th>
+                                    {{ key }}
+                                </th>
+
                             {% endfor %}
+
                         </tr>
+
                     </thead>
+
 
                     <tbody>
 
@@ -281,7 +427,13 @@
                                 {% for value in row.values() %}
 
                                     <td>
-                                        {{ value if value is not none else "" }}
+
+                                        {{
+                                            value
+                                            if value is not none
+                                            else ""
+                                        }}
+
                                     </td>
 
                                 {% endfor %}
@@ -296,9 +448,10 @@
 
             </div>
 
+
         {% else %}
 
-            <p>
+            <p class="empty-message">
                 No product records available.
             </p>
 
@@ -306,10 +459,17 @@
 
     </section>
 
-    <!-- Recent Orders -->
+
+    <!-- ========================================================= -->
+    <!-- RECENT ORDERS -->
+    <!-- ========================================================= -->
+
     <section id="orders">
 
-        <h2>Recent Orders</h2>
+        <h2>
+            Recent Orders
+        </h2>
+
 
         {% if orders %}
 
@@ -318,12 +478,21 @@
                 <table>
 
                     <thead>
+
                         <tr>
+
                             {% for key in orders[0].keys() %}
-                                <th>{{ key }}</th>
+
+                                <th>
+                                    {{ key }}
+                                </th>
+
                             {% endfor %}
+
                         </tr>
+
                     </thead>
+
 
                     <tbody>
 
@@ -331,10 +500,27 @@
 
                             <tr>
 
-                                {% for value in row.values() %}
+                                {% for key, value in row.items() %}
 
                                     <td>
-                                        {{ value if value is not none else "" }}
+
+                                        {% if key == 'status'
+                                              and value == 'CANCELLED' %}
+
+                                            <span class="status-cancelled">
+                                                {{ value }}
+                                            </span>
+
+                                        {% else %}
+
+                                            {{
+                                                value
+                                                if value is not none
+                                                else ""
+                                            }}
+
+                                        {% endif %}
+
                                     </td>
 
                                 {% endfor %}
@@ -349,9 +535,10 @@
 
             </div>
 
+
         {% else %}
 
-            <p>
+            <p class="empty-message">
                 No order records available.
             </p>
 
@@ -359,41 +546,113 @@
 
     </section>
 
-    <!-- Failed Orders -->
-    <section id="failed-orders">
 
-        <h2>Failed Orders</h2>
+    <!-- ========================================================= -->
+    <!-- CANCELLED ORDERS -->
+    <!-- ========================================================= -->
 
-        {% if failed_orders %}
+    <section id="cancelled-orders">
+
+        <h2>
+            Cancelled Orders
+        </h2>
+
+        <p class="muted">
+            Orders that were successfully cancelled and had their inventory
+            restored.
+        </p>
+
+
+        {% set has_cancelled_orders = namespace(value=false) %}
+
+
+        {% if orders %}
 
             <div class="table-wrap">
 
                 <table>
 
                     <thead>
+
                         <tr>
-                            {% for key in failed_orders[0].keys() %}
-                                <th>{{ key }}</th>
+
+                            {% for key in orders[0].keys() %}
+
+                                <th>
+                                    {{ key }}
+                                </th>
+
                             {% endfor %}
+
                         </tr>
+
                     </thead>
 
+
                     <tbody>
-                        {% for row in failed_orders %}
-                            <tr>
-                                {% for value in row.values() %}
-                                    <td>{{ value if value is not none else "" }}</td>
-                                {% endfor %}
-                            </tr>
+
+                        {% for row in orders %}
+
+                            {% if row.get('status') == 'CANCELLED' %}
+
+                                {% set has_cancelled_orders.value = true %}
+
+                                <tr>
+
+                                    {% for key, value in row.items() %}
+
+                                        <td>
+
+                                            {% if key == 'status' %}
+
+                                                <span
+                                                    class="status-cancelled"
+                                                >
+                                                    {{ value }}
+                                                </span>
+
+                                            {% else %}
+
+                                                {{
+                                                    value
+                                                    if value is not none
+                                                    else ""
+                                                }}
+
+                                            {% endif %}
+
+                                        </td>
+
+                                    {% endfor %}
+
+                                </tr>
+
+                            {% endif %}
+
                         {% endfor %}
+
                     </tbody>
 
                 </table>
 
             </div>
 
+
+            {% if not has_cancelled_orders.value %}
+
+                <p class="empty-message">
+                    No cancelled orders found.
+                </p>
+
+            {% endif %}
+
+
         {% else %}
-            <p>No failed orders found.</p>
+
+            <p class="empty-message">
+                No cancelled orders found.
+            </p>
+
         {% endif %}
 
     </section>
