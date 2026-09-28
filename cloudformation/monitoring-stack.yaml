@@ -227,31 +227,19 @@ Resources:
               "width": 12,
               "height": 6,
               "properties": {
-                "title": "Orders Failed by Reason",
-                "view": "timeSeries",
-                "region": "${AWS::Region}",
-                "period": 300,
-                "stat": "Sum",
-                "metrics": [
-                  ["cloudmart", "OrdersFailed", "Environment", "${Environment}", "Reason", "DB_ERROR", {"label": "DB_ERROR"}],
-                  ["...", "Reason", "INTERNAL_ERROR", {"label": "INTERNAL_ERROR"}]
-                ]
-              }
-            },
-            {
-              "type": "metric",
-              "x": 12,
-              "y": 6,
-              "width": 12,
-              "height": 6,
-              "properties": {
                 "title": "Low Stock Events",
                 "view": "timeSeries",
                 "region": "${AWS::Region}",
                 "period": 300,
                 "stat": "Sum",
                 "metrics": [
-                  [{"expression": "SEARCH('{cloudmart,Environment,ProductId} MetricName=\\\"LowStockEvents\\\" Environment=\\\"${Environment}\\\"', 'Sum', 300)", "label": "Low Stock Events", "id": "e1"}]
+                  [
+                    {
+                      "expression": "SEARCH('{cloudmart,Environment,ProductId} MetricName=\\\"LowStockEvents\\\" Environment=\\\"${Environment}\\\"', 'Sum', 300)",
+                      "label": "Low Stock Events",
+                      "id": "e1"
+                    }
+                  ]
                 ]
               }
             },
