@@ -22,6 +22,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub cloudmart-${Environment}-authorizer-role
+
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -44,6 +45,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/token
+
 
   # ============================================================
   # Product Lambda Execution Role
@@ -72,7 +74,7 @@ Resources:
             Version: '2012-10-17'
             Statement:
 
-              # RDS / Secrets Manager access
+              # Secrets Manager
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -85,6 +87,7 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: '*'
+
 
   # ============================================================
   # Order Lambda Execution Role
@@ -145,6 +148,7 @@ Resources:
                   - logs:PutLogEvents
                 Resource: '*'
 
+
   # ============================================================
   # Report Lambda Execution Role
   # ============================================================
@@ -200,6 +204,7 @@ Resources:
                   - logs:PutLogEvents
                 Resource: '*'
 
+
   # ============================================================
   # EC2 Dashboard Instance Role
   # ============================================================
@@ -250,6 +255,7 @@ Resources:
                   - ssm:GetParameter
                 Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/*
 
+
   # ============================================================
   # EC2 Dashboard Instance Profile
   # ============================================================
@@ -260,9 +266,10 @@ Resources:
       Roles:
         - !Ref EC2DashboardInstanceRole
 
-# ==============================================================
+
+# ============================================================
 # Outputs
-# ==============================================================
+# ============================================================
 
 Outputs:
 
@@ -270,28 +277,32 @@ Outputs:
     Description: Lambda authorizer execution role ARN
     Value: !GetAtt AuthorizerExecutionRole.Arn
     Export:
-      Name: !Sub CloudMart-${Environment}-AuthorizerRoleArn
+      Name: !Sub cloudmart-${Environment}-authorizer-role-arn
+
 
   ProductRoleArn:
     Description: Product Lambda execution role ARN
     Value: !GetAtt ProductLambdaExecutionRole.Arn
     Export:
-      Name: !Sub CloudMart-${Environment}-ProductRoleArn
+      Name: !Sub cloudmart-${Environment}-product-role-arn
+
 
   OrderRoleArn:
     Description: Order Lambda execution role ARN
     Value: !GetAtt OrderLambdaExecutionRole.Arn
     Export:
-      Name: !Sub CloudMart-${Environment}-OrderRoleArn
+      Name: !Sub cloudmart-${Environment}-order-role-arn
+
 
   ReportRoleArn:
     Description: Report Lambda execution role ARN
     Value: !GetAtt ReportLambdaExecutionRole.Arn
     Export:
-      Name: !Sub CloudMart-${Environment}-ReportRoleArn
+      Name: !Sub cloudmart-${Environment}-report-role-arn
+
 
   EC2DashboardInstanceProfileArn:
     Description: EC2 dashboard instance profile ARN
     Value: !GetAtt EC2DashboardInstanceProfile.Arn
     Export:
-      Name: !Sub CloudMart-${Environment}-EC2DashboardInstanceProfileArn
+      Name: !Sub cloudmart-${Environment}-ec2-dashboard-instance-profile-arn
