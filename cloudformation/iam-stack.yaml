@@ -120,7 +120,7 @@ Resources:
 
 
               # ------------------------------------------------
-              # AUTHORIZER CLOUDWATCH LOGS
+              # AUTHORIzER CLOUDWATCH LOGS
               # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
@@ -395,7 +395,7 @@ Resources:
                   - s3:PutObject
 
                 Resource:
-                  !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
+                  !Sub arn:aws:s3:::cloudmart-${Environment}-reports-${AWS::AccountId}/reports/*
 
 
               - Sid: OwnLogGroupOnly
@@ -451,6 +451,24 @@ Resources:
 
             Statement:
 
+              - Sid: ListReportsOnly
+
+                Effect: Allow
+
+                Action:
+                  - s3:ListBucket
+
+                Resource:
+                  !Sub arn:aws:s3:::cloudmart-${Environment}-reports-${AWS::AccountId}
+
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - reports/*
+                      - reports/24hours/*
+                      - reports/monthly/*
+
+
               - Sid: ReadReportsOnly
 
                 Effect: Allow
@@ -459,7 +477,7 @@ Resources:
                   - s3:GetObject
 
                 Resource:
-                  !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
+                  !Sub arn:aws:s3:::cloudmart-${Environment}-reports-${AWS::AccountId}/reports/*
 
 
               # ------------------------------------------------
@@ -525,70 +543,6 @@ Resources:
 
       Roles:
         - !Ref EC2DashboardInstanceRole
-
-
-  # ============================================================
-  # CLOUDMARTPROJECT DASHBOARD SSM DEPLOYMENT POLICY
-  # ============================================================
-  #
-  # CloudMartProject is the existing GitHub OIDC /
-  # CloudFormation deployment role.
-  #
-  # We do NOT create CloudMartProject here.
-  #
-  # This policy is attached to the already-existing role so that
-  # GitHub Actions can deploy the Flask dashboard through SSM.
-  #
-  # The EC2 instance ID is intentionally not hardcoded because
-  # CloudFormation may create a new dashboard instance.
-  #
-  # ============================================================
-
-  CloudMartProjectDashboardSSMPolicy:
-    Type: AWS::IAM::Policy
-
-    Properties:
-      PolicyName: CloudMartProjectDashboardSSMDeployment
-
-      Roles:
-        - CloudMartProject
-
-      PolicyDocument:
-        Version: "2012-10-17"
-
-        Statement:
-
-          # ------------------------------------------------
-          # SEND DASHBOARD DEPLOYMENT COMMAND
-          # ------------------------------------------------
-
-          - Sid: DeployDashboardThroughSSM
-
-            Effect: Allow
-
-            Action:
-              - ssm:SendCommand
-
-            Resource:
-              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
-
-              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
-
-
-          # ------------------------------------------------
-          # READ SSM COMMAND RESULTS
-          # ------------------------------------------------
-
-          - Sid: ReadDashboardSSMCommandResult
-
-            Effect: Allow
-
-            Action:
-              - ssm:GetCommandInvocation
-              - ssm:ListCommandInvocations
-              - ssm:ListCommands
-
-            Resource: "*"
 
 
 # ============================================================
