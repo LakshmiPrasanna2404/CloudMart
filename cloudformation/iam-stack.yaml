@@ -63,6 +63,7 @@ Resources:
 
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/products-token
 
 
@@ -79,6 +80,7 @@ Resources:
 
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
@@ -95,11 +97,16 @@ Resources:
 
                 Resource:
                   - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cloudmart-${Environment}-product
+
                   - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cloudmart-${Environment}-order
 
 
               # ------------------------------------------------
               # SES CUSTOMER EMAIL VERIFICATION
+              # ------------------------------------------------
+              # When a new customer registers, the Authorizer
+              # automatically requests SES verification.
+              # SES sends the verification email to the customer.
               # ------------------------------------------------
 
               - Sid: VerifyCustomerEmail
@@ -156,10 +163,7 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      # Basic Lambda logging permissions
-      # + VPC networking permissions required by the VPC-attached Lambda
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
 
       Policies:
@@ -170,10 +174,6 @@ Resources:
             Version: "2012-10-17"
 
             Statement:
-
-              # ------------------------------------------------
-              # DATABASE CREDENTIALS
-              # ------------------------------------------------
 
               - Sid: ReadDbCredentials
 
@@ -186,10 +186,6 @@ Resources:
                   !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/*
 
 
-              # ------------------------------------------------
-              # EVENTBRIDGE INVENTORY EVENTS
-              # ------------------------------------------------
-
               - Sid: PublishInventoryEvents
 
                 Effect: Allow
@@ -200,10 +196,6 @@ Resources:
                 Resource:
                   !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-bus
 
-
-              # ------------------------------------------------
-              # CLOUDWATCH CUSTOM METRICS
-              # ------------------------------------------------
 
               - Sid: PublishCustomMetrics
 
@@ -218,10 +210,6 @@ Resources:
                   StringEquals:
                     cloudwatch:namespace: cloudmart
 
-
-              # ------------------------------------------------
-              # PRODUCT LAMBDA CLOUDWATCH LOGS
-              # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
 
@@ -275,10 +263,6 @@ Resources:
 
             Statement:
 
-              # ------------------------------------------------
-              # DATABASE CREDENTIALS
-              # ------------------------------------------------
-
               - Sid: ReadDbCredentials
 
                 Effect: Allow
@@ -290,10 +274,6 @@ Resources:
                   !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/*
 
 
-              # ------------------------------------------------
-              # EVENTBRIDGE ORDER EVENTS
-              # ------------------------------------------------
-
               - Sid: PublishOrderEvents
 
                 Effect: Allow
@@ -304,10 +284,6 @@ Resources:
                 Resource:
                   !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-bus
 
-
-              # ------------------------------------------------
-              # CLOUDWATCH CUSTOM METRICS
-              # ------------------------------------------------
 
               - Sid: PublishCustomMetrics
 
@@ -322,10 +298,6 @@ Resources:
                   StringEquals:
                     cloudwatch:namespace: cloudmart
 
-
-              # ------------------------------------------------
-              # SNS LOW STOCK ALERTS
-              # ------------------------------------------------
 
               - Sid: PublishLowStockAlerts
 
@@ -351,10 +323,6 @@ Resources:
 
                 Resource: "*"
 
-
-              # ------------------------------------------------
-              # ORDER LAMBDA CLOUDWATCH LOGS
-              # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
 
@@ -408,10 +376,6 @@ Resources:
 
             Statement:
 
-              # ------------------------------------------------
-              # DATABASE CREDENTIALS
-              # ------------------------------------------------
-
               - Sid: ReadDbCredentials
 
                 Effect: Allow
@@ -423,10 +387,6 @@ Resources:
                   !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/*
 
 
-              # ------------------------------------------------
-              # WRITE REPORTS TO S3
-              # ------------------------------------------------
-
               - Sid: WriteReportsOnly
 
                 Effect: Allow
@@ -437,10 +397,6 @@ Resources:
                 Resource:
                   !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
 
-
-              # ------------------------------------------------
-              # REPORT LAMBDA CLOUDWATCH LOGS
-              # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
 
@@ -495,10 +451,6 @@ Resources:
 
             Statement:
 
-              # ------------------------------------------------
-              # READ REPORTS
-              # ------------------------------------------------
-
               - Sid: ReadReportsOnly
 
                 Effect: Allow
@@ -525,10 +477,6 @@ Resources:
                   !Sub arn:aws:s3:::cloudmart-artifacts-${AWS::AccountId}/dashboard/dashboard.zip
 
 
-              # ------------------------------------------------
-              # DATABASE CONFIGURATION
-              # ------------------------------------------------
-
               - Sid: ReadDbConfigOnly
 
                 Effect: Allow
@@ -538,14 +486,13 @@ Resources:
 
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
-
-              # ------------------------------------------------
-              # DASHBOARD CLOUDWATCH LOGS
-              # ------------------------------------------------
 
               - Sid: OwnLogGroupOnly
 
@@ -580,6 +527,70 @@ Resources:
         - !Ref EC2DashboardInstanceRole
 
 
+  # ============================================================
+  # CLOUDMARTPROJECT DASHBOARD SSM DEPLOYMENT POLICY
+  # ============================================================
+  #
+  # CloudMartProject is the existing GitHub OIDC /
+  # CloudFormation deployment role.
+  #
+  # We do NOT create CloudMartProject here.
+  #
+  # This policy is attached to the already-existing role so that
+  # GitHub Actions can deploy the Flask dashboard through SSM.
+  #
+  # The EC2 instance ID is intentionally not hardcoded because
+  # CloudFormation may create a new dashboard instance.
+  #
+  # ============================================================
+
+  CloudMartProjectDashboardSSMPolicy:
+    Type: AWS::IAM::Policy
+
+    Properties:
+      PolicyName: CloudMartProjectDashboardSSMDeployment
+
+      Roles:
+        - CloudMartProject
+
+      PolicyDocument:
+        Version: "2012-10-17"
+
+        Statement:
+
+          # ------------------------------------------------
+          # SEND DASHBOARD DEPLOYMENT COMMAND
+          # ------------------------------------------------
+
+          - Sid: DeployDashboardThroughSSM
+
+            Effect: Allow
+
+            Action:
+              - ssm:SendCommand
+
+            Resource:
+              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+
+              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+
+
+          # ------------------------------------------------
+          # READ SSM COMMAND RESULTS
+          # ------------------------------------------------
+
+          - Sid: ReadDashboardSSMCommandResult
+
+            Effect: Allow
+
+            Action:
+              - ssm:GetCommandInvocation
+              - ssm:ListCommandInvocations
+              - ssm:ListCommands
+
+            Resource: "*"
+
+
 # ============================================================
 # OUTPUTS
 # ============================================================
@@ -587,35 +598,30 @@ Resources:
 Outputs:
 
   AuthorizerRoleArn:
-    Description: Lambda authorizer execution role ARN
     Value: !GetAtt AuthorizerExecutionRole.Arn
     Export:
       Name: !Sub cloudmart-${Environment}-authorizer-role-arn
 
 
   ProductRoleArn:
-    Description: Product Lambda execution role ARN
     Value: !GetAtt ProductLambdaExecutionRole.Arn
     Export:
       Name: !Sub cloudmart-${Environment}-product-role-arn
 
 
   OrderRoleArn:
-    Description: Order Lambda execution role ARN
     Value: !GetAtt OrderLambdaExecutionRole.Arn
     Export:
       Name: !Sub cloudmart-${Environment}-order-role-arn
 
 
   ReportRoleArn:
-    Description: Report Lambda execution role ARN
     Value: !GetAtt ReportLambdaExecutionRole.Arn
     Export:
       Name: !Sub cloudmart-${Environment}-report-role-arn
 
 
   EC2DashboardInstanceProfileArn:
-    Description: EC2 dashboard instance profile ARN
     Value: !GetAtt EC2DashboardInstanceProfile.Arn
     Export:
-      Name: !Sub cloudmart-${Environment}-ec2-dashboard-instance-profile-arn
+      Name: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
