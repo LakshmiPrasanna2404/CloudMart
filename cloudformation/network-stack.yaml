@@ -420,7 +420,10 @@ Resources:
         - !Ref PrivateSubnet
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-      PrivateDnsEnabled: false
+      # Lambda uses monitoring.us-east-1.amazonaws.com.
+      # Private DNS must be enabled so that hostname resolves
+      # to this VPC endpoint instead of the public AWS endpoint.
+      PrivateDnsEnabled: true
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-cloudwatch-monitoring-endpoint
