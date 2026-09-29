@@ -17,7 +17,7 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
-  EXEC_ROLE: ${{ vars.CFN_EXEC_ROLE_ARN }}
+  DEPLOY_ROLE: ${{ vars.AWS_ROLE_ARN }}
 
 jobs:
   # ============================================================
@@ -68,7 +68,7 @@ jobs:
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
             --parameter-overrides Environment=prod \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -141,7 +141,7 @@ jobs:
               Environment=prod \
               DBMasterUsername="${{ steps.dbcreds.outputs.username }}" \
               DBMasterUserPassword="${{ steps.dbcreds.outputs.password }}" \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -171,7 +171,7 @@ jobs:
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
             --parameter-overrides Environment=prod \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -245,7 +245,7 @@ jobs:
             --parameter-overrides \
               Environment=prod \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -383,7 +383,7 @@ jobs:
               DBPasswordParameter="/cloudmart/prod/db/password" \
               ArtifactBucketName="${{ steps.outputs.outputs.artifacts_bucket }}" \
               ArtifactKey="lambdas/report-generate.zip" \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -411,7 +411,7 @@ jobs:
               Environment=prod \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
               DBInstanceIdentifier=cloudmart-prod-db \
-            --role-arn "$EXEC_ROLE" \
+            --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
