@@ -7,7 +7,6 @@ Description: >
   No NAT Gateway is used.
 
 Parameters:
-
   Environment:
     Type: String
     Default: prod
@@ -19,12 +18,11 @@ Parameters:
     Description: CIDR allowed to reach the EC2 ops dashboard
     Default: 0.0.0.0/0
 
-
 Resources:
 
-  # ============================================================
+  # =========================
   # VPC
-  # ============================================================
+  # =========================
 
   VPC:
     Type: AWS::EC2::VPC
@@ -32,223 +30,170 @@ Resources:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc
 
-
-  # ============================================================
+  # =========================
   # SUBNETS
-  # ============================================================
+  # =========================
 
   PublicSubnet:
     Type: AWS::EC2::Subnet
-
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [0, !GetAZs ""]
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-public-subnet
 
-
   PrivateSubnet:
     Type: AWS::EC2::Subnet
-
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [0, !GetAZs ""]
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-private-subnet
 
-
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
-
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [1, !GetAZs ""]
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-private-subnet-2
 
-
-  # ============================================================
+  # =========================
   # INTERNET GATEWAY
-  # ============================================================
+  # =========================
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-
     Properties:
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-igw
 
-
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
-
     Properties:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-
-  # ============================================================
+  # =========================
   # PUBLIC ROUTING
-  # ============================================================
+  # =========================
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
-
     Properties:
       VpcId: !Ref VPC
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-public-rt
 
-
   PublicRoute:
     Type: AWS::EC2::Route
-
     DependsOn: VPCGatewayAttachment
-
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-
   PublicSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-
-  # ============================================================
+  # =========================
   # PRIVATE ROUTING
-  # ============================================================
+  # =========================
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
-
     Properties:
       VpcId: !Ref VPC
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-private-rt
 
-
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-
     Properties:
       SubnetId: !Ref PrivateSubnet
       RouteTableId: !Ref PrivateRouteTable
 
-
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-
-  # ============================================================
+  # =========================
   # SECURITY GROUPS
-  # ============================================================
+  # =========================
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
-
     Properties:
       GroupDescription: Security group for the EC2 Flask dashboard
       VpcId: !Ref VPC
-
       SecurityGroupIngress:
-
-        # --------------------------------------------------------
-        # HTTP — Flask Dashboard
-        # --------------------------------------------------------
-
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: !Ref DashboardAccessCidr
           Description: HTTP access to the CloudMart Flask dashboard
 
-        # --------------------------------------------------------
-        # HTTPS
-        # --------------------------------------------------------
-
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: !Ref DashboardAccessCidr
           Description: HTTPS access to the CloudMart dashboard
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-ec2-sg
 
-
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-
     Properties:
       GroupDescription: Security group for all Lambda functions in the private subnet
       VpcId: !Ref VPC
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-lambda-sg
 
-
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-
     Properties:
       GroupDescription: Security group for the RDS MySQL instance
       VpcId: !Ref VPC
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-rds-sg
 
-
   VPCEndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-
     Properties:
       GroupDescription: Security group for AWS interface endpoints
       VpcId: !Ref VPC
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-vpc-endpoint-sg
 
-
-  # ============================================================
+  # =========================
   # SECURITY GROUP INGRESS
-  # ============================================================
+  # =========================
 
   RDSIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
-
     Properties:
       GroupId: !Ref RDSSecurityGroup
       IpProtocol: tcp
@@ -257,10 +202,8 @@ Resources:
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
       Description: Allow Lambda functions to reach RDS
 
-
   RDSIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
-
     Properties:
       GroupId: !Ref RDSSecurityGroup
       IpProtocol: tcp
@@ -269,10 +212,8 @@ Resources:
       SourceSecurityGroupId: !Ref EC2SecurityGroup
       Description: Allow the dashboard to read from RDS
 
-
   EndpointIngressFromLambda:
     Type: AWS::EC2::SecurityGroupIngress
-
     Properties:
       GroupId: !Ref VPCEndpointSecurityGroup
       IpProtocol: tcp
@@ -281,10 +222,8 @@ Resources:
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
       Description: Allow Lambda access to interface endpoints
 
-
   EndpointIngressFromEC2:
     Type: AWS::EC2::SecurityGroupIngress
-
     Properties:
       GroupId: !Ref VPCEndpointSecurityGroup
       IpProtocol: tcp
@@ -293,14 +232,12 @@ Resources:
       SourceSecurityGroupId: !Ref EC2SecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
-
-  # ============================================================
+  # =========================
   # SECURITY GROUP EGRESS
-  # ============================================================
+  # =========================
 
   LambdaEgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref LambdaSecurityGroup
       IpProtocol: tcp
@@ -309,10 +246,8 @@ Resources:
       DestinationSecurityGroupId: !Ref RDSSecurityGroup
       Description: Allow Lambda functions to reach RDS
 
-
   LambdaEgressToEndpoints:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref LambdaSecurityGroup
       IpProtocol: tcp
@@ -321,10 +256,8 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow Lambda access to interface endpoints
 
-
   LambdaEgressToS3:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref LambdaSecurityGroup
       IpProtocol: tcp
@@ -333,10 +266,8 @@ Resources:
       DestinationPrefixListId: pl-63a5400a
       Description: Allow Lambda functions to reach the S3 Gateway Endpoint
 
-
   EC2EgressToRDS:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
@@ -345,10 +276,8 @@ Resources:
       DestinationSecurityGroupId: !Ref RDSSecurityGroup
       Description: Allow the dashboard to reach RDS
 
-
   EC2EgressToEndpoints:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
@@ -357,10 +286,8 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
-
   EC2EgressToS3:
     Type: AWS::EC2::SecurityGroupEgress
-
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
@@ -369,211 +296,161 @@ Resources:
       DestinationPrefixListId: pl-63a5400a
       Description: Allow the dashboard to reach the S3 Gateway Endpoint
 
-
-  # ============================================================
+  # =========================
   # S3 GATEWAY ENDPOINT
-  # ============================================================
+  # =========================
 
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       VpcEndpointType: Gateway
-
       RouteTableIds:
         - !Ref PrivateRouteTable
         - !Ref PublicRouteTable
 
-
-  # ============================================================
+  # =========================
   # SSM INTERFACE ENDPOINT
-  # ============================================================
+  # =========================
 
   SSMInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: true
 
-
-  # ============================================================
+  # =========================
   # SSM MESSAGES INTERFACE ENDPOINT
-  # ============================================================
+  # =========================
 
   SSMMessagesInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: true
 
-
-  # ============================================================
+  # =========================
   # EVENTBRIDGE INTERFACE ENDPOINT
-  # ============================================================
+  # =========================
 
   EventBridgeInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.events
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: true
 
-
-  # ============================================================
+  # =========================
   # SNS INTERFACE ENDPOINT
-  # ============================================================
+  # =========================
 
   SNSInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: true
 
-
-  # ============================================================
+  # =========================
   # LAMBDA INTERFACE ENDPOINT
-  # ============================================================
+  # =========================
 
   LambdaInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.lambda
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: true
 
-
-  # ============================================================
+  # =========================
   # CLOUDWATCH MONITORING ENDPOINT
-  # ============================================================
+  # =========================
 
   CloudWatchMonitoringInterfaceEndpoint:
     Type: AWS::EC2::VPCEndpoint
-
     Properties:
       VpcId: !Ref VPC
       ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
       VpcEndpointType: Interface
-
       SubnetIds:
         - !Ref PrivateSubnet
-
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
-
       PrivateDnsEnabled: false
-
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-cloudwatch-monitoring-endpoint
 
-
-# ============================================================
+# =========================
 # OUTPUTS
-# ============================================================
+# =========================
 
 Outputs:
 
   VpcId:
     Value: !Ref VPC
-
     Export:
       Name: !Sub cloudmart-${Environment}-vpc-id
 
-
   PublicSubnetId:
     Value: !Ref PublicSubnet
-
     Export:
       Name: !Sub cloudmart-${Environment}-public-subnet-id
 
-
   PrivateSubnetId:
     Value: !Ref PrivateSubnet
-
     Export:
       Name: !Sub cloudmart-${Environment}-private-subnet-id
 
-
   PrivateSubnet2Id:
     Value: !Ref PrivateSubnet2
-
     Export:
       Name: !Sub cloudmart-${Environment}-private-subnet-2-id
 
-
   LambdaSecurityGroupId:
     Value: !Ref LambdaSecurityGroup
-
     Export:
       Name: !Sub cloudmart-${Environment}-lambda-sg-id
 
-
   RDSSecurityGroupId:
     Value: !Ref RDSSecurityGroup
-
     Export:
       Name: !Sub cloudmart-${Environment}-rds-sg-id
 
-
   EC2SecurityGroupId:
     Value: !Ref EC2SecurityGroup
-
     Export:
       Name: !Sub cloudmart-${Environment}-ec2-sg-id
 
-
   VPCEndpointSecurityGroupId:
     Value: !Ref VPCEndpointSecurityGroup
-
     Export:
       Name: !Sub cloudmart-${Environment}-vpc-endpoint-sg-id
