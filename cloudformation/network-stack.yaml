@@ -15,8 +15,8 @@ Parameters:
 
   DashboardAccessCidr:
     Type: String
-    Description: CIDR allowed to reach the EC2 ops dashboard
-    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach the EC2 ops dashboard (your IP, not 0.0.0.0/0)
+    Default: 203.0.113.0/32
 
 Resources:
 
@@ -147,16 +147,10 @@ Resources:
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Ref DashboardAccessCidr
-          Description: HTTP access to the CloudMart Flask dashboard
-
-        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: !Ref DashboardAccessCidr
-          Description: HTTPS access to the CloudMart dashboard
+          Description: HTTPS access to the ops dashboard
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-ec2-sg
@@ -389,6 +383,28 @@ Resources:
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
       PrivateDnsEnabled: true
+
+  # =========================
+  # SES API INTERFACE ENDPOINT
+  # =========================
+  # Required because the Authorizer Lambda runs in the private subnet
+  # and calls SES VerifyEmailIdentity during customer registration.
+  # No NAT Gateway is used in CloudMart.
+
+  SESInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.email
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-ses-endpoint
 
   # =========================
   # CLOUDWATCH MONITORING ENDPOINT
