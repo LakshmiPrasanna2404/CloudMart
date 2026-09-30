@@ -13,56 +13,12 @@ Parameters:
     Default: prod
     AllowedValues: [dev, prod]
 
+  ReportsBucketName:
+    Type: String
+    Description: Existing CloudMart S3 bucket used for generated reports
+
 
 Resources:
-
-  # ============================================================
-  # EXISTING GITHUB ACTIONS ROLE - DASHBOARD SSM DEPLOYMENT
-  # CloudMartProject already exists outside this stack.
-  # This resource manages only an additional inline policy on it;
-  # it does NOT create or replace the CloudMartProject role.
-  # This avoids the ResourceExistenceCheck failure caused by trying
-  # to create the already-existing CloudMartProject role here.
-  # ============================================================
-
-  CloudMartProjectDashboardSSMPolicy:
-    Type: AWS::IAM::Policy
-
-    Properties:
-      PolicyName: CloudMartDashboardSSMDeployV2
-      Roles:
-        - CloudMartProject
-
-      PolicyDocument:
-        Version: "2012-10-17"
-
-        Statement:
-
-          - Sid: DescribeDashboardSSMRegistration
-            Effect: Allow
-            Action:
-              - ssm:DescribeInstanceInformation
-            Resource: "*"
-
-          - Sid: SendDashboardCommand
-            Effect: Allow
-            Action:
-              - ssm:SendCommand
-            Resource:
-              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
-              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
-            Condition:
-              StringEquals:
-                ssm:resourceTag/Project: CloudMart
-                ssm:resourceTag/Component: Dashboard
-
-          - Sid: ReadDashboardCommandResult
-            Effect: Allow
-            Action:
-              - ssm:GetCommandInvocation
-              - ssm:ListCommandInvocations
-              - ssm:ListCommands
-            Resource: "*"
 
   # ============================================================
   # AUTHORIZER EXECUTION ROLE
@@ -443,7 +399,7 @@ Resources:
                   - s3:PutObject
 
                 Resource:
-                  !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
+                  !Sub arn:aws:s3:::${ReportsBucketName}/reports/*
 
 
               - Sid: OwnLogGroupOnly
@@ -507,7 +463,7 @@ Resources:
                   - s3:GetObject
 
                 Resource:
-                  !Sub arn:aws:s3:::cloudmart-reports-${AWS::AccountId}/reports/*
+                  !Sub arn:aws:s3:::${ReportsBucketName}/reports/*
 
 
               # ------------------------------------------------
