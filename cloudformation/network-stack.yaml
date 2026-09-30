@@ -363,6 +363,22 @@ Resources:
       PrivateDnsEnabled: true
 
   # =========================
+  # EC2 MESSAGES INTERFACE ENDPOINT
+  # =========================
+
+  EC2MessagesInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # =========================
   # EVENTBRIDGE INTERFACE ENDPOINT
   # =========================
 
