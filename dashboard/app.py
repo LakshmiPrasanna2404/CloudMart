@@ -3,6 +3,7 @@ import logging
 import hashlib
 import csv
 import io
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -109,8 +110,8 @@ SESSION_TIMEOUT_MINUTES = int(
 # FLASK SESSION SECRET
 # ============================================================
 #
-# The Flask secret key must be identical for all Gunicorn
-# workers. Otherwise, one worker may not be able to validate
+# The Flask secret key must be identical across application
+# processes. Otherwise, one worker may not be able to validate
 # a session created by another worker.
 #
 # If FLASK_SECRET_KEY is supplied through the environment,
@@ -175,7 +176,7 @@ if not FLASK_SECRET_KEY:
 
             except FileExistsError:
 
-                # Another Gunicorn worker may have created
+                # Another application process may have created
                 # the file at the same time. Read that
                 # already-created value instead.
                 with open(
@@ -487,7 +488,13 @@ def fetch_orders():
 # ============================================================
 
 def list_report_objects(prefix):
-    """List CSV reports under a specific S3 prefix."""
+    """
+    List CSV reports under a specific S3 prefix.
+
+    Example prefixes:
+        reports/24hours/
+        reports/monthly/
+    """
 
     objects = []
 
@@ -510,86 +517,144 @@ def list_report_objects(prefix):
             prefix,
             error,
         )
-
         return []
 
     return objects
 
 
-def read_report_rows(key):
-    """Read one CSV report from S3 and return its rows."""
+def parse_utc_metadata(value):
+    """Parse an ISO UTC timestamp stored in S3 object metadata."""
 
-    response = s3.get_object(
-        Bucket=REPORTS_BUCKET,
-        Key=key,
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def format_utc_timestamp(value):
+    """Format a UTC datetime for the dashboard."""
+
+    if not value:
+        return "Not available"
+
+    return value.astimezone(timezone.utc).strftime(
+        "%b %-d, %Y %H:%M UTC"
     )
 
-    raw_csv = response["Body"].read().decode(
-        "utf-8",
-        errors="replace",
+
+def format_utc_timestamp_portable(value):
+    """Portable UTC formatter for Linux environments."""
+
+    if not value:
+        return "Not available"
+
+    return value.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S UTC"
     )
 
-    reader = csv.DictReader(
-        io.StringIO(raw_csv)
-    )
 
-    return list(reader)
-
-
-def calculate_report_summary(rows):
+def read_report_summary(key):
     """
-    Calculate unique order count and revenue.
+    Calculate order count and revenue from the generated CSV.
 
-    The CSV can contain multiple rows for one order when an order
-    contains multiple products. Therefore total_amount is counted
-    only once per order_id.
+    total_amount is repeated on each order_items row, so revenue is
+    calculated once per unique order_id. Cancelled and failed orders
+    are excluded from revenue.
     """
 
-    orders = {}
+    try:
+        response = s3.get_object(
+            Bucket=REPORTS_BUCKET,
+            Key=key,
+        )
 
-    for row in rows:
-        order_id = str(row.get("order_id", "")).strip()
+        raw_csv = response["Body"].read().decode(
+            "utf-8",
+            errors="replace",
+        )
 
-        if not order_id:
-            continue
+        reader = csv.DictReader(io.StringIO(raw_csv))
 
-        if order_id not in orders:
+        orders_by_id = {}
+
+        for row in reader:
+            order_id = str(row.get("order_id", "")).strip()
+
+            if not order_id:
+                continue
+
+            if order_id not in orders_by_id:
+                orders_by_id[order_id] = row
+
+        revenue = Decimal("0")
+
+        for row in orders_by_id.values():
+            status = str(row.get("status", "")).strip().upper()
+
+            if status in {
+                "CANCELLED",
+                "CANCELED",
+                "FAILED",
+                "FAILURE",
+            }:
+                continue
+
             try:
-                amount = float(row.get("total_amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0.0
+                revenue += Decimal(
+                    str(row.get("total_amount") or "0")
+                )
+            except (InvalidOperation, ValueError, TypeError):
+                logging.warning(
+                    "Invalid total_amount in report %s: %r",
+                    key,
+                    row.get("total_amount"),
+                )
 
-            orders[order_id] = amount
+        return {
+            "order_count": len(orders_by_id),
+            "revenue": float(revenue),
+        }
 
-    return {
-        "order_count": len(orders),
-        "revenue": sum(orders.values()),
-    }
+    except (BotoCoreError, ClientError, UnicodeDecodeError) as error:
+        logging.exception(
+            "Unable to calculate report summary for %s: %s",
+            key,
+            error,
+        )
+        return {
+            "order_count": 0,
+            "revenue": 0.0,
+        }
 
 
 def build_report_info(period):
     """
-    Return the newest report for the requested period.
+    Return the newest S3 report for the requested period.
 
     period:
-        24h      -> previous calendar day
-        monthly  -> previous calendar month
+        24h      = previous calendar day report
+        monthly  = previous calendar month report
+
+    The report Lambda stores the exact UTC window in S3 metadata.
+    The dashboard reads that metadata so the displayed period exactly
+    matches the CSV that was generated.
     """
 
     if period == "24h":
         prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
         title = "Previous Day"
-        window_text = (
-            "Previous day 12:00 AM UTC to today 12:00 AM UTC."
-        )
+        type_label = "Previous Calendar Day"
 
     elif period == "monthly":
         prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
         title = "Last Month"
-        window_text = (
-            "First day of the previous month 12:00 AM UTC "
-            "to first day of the current month 12:00 AM UTC."
-        )
+        type_label = "Previous Calendar Month"
 
     else:
         return None
@@ -607,18 +672,27 @@ def build_report_info(period):
     key = newest["Key"]
 
     try:
-        rows = read_report_rows(key)
-        summary = calculate_report_summary(rows)
-    except (BotoCoreError, ClientError, OSError, UnicodeError) as error:
+        head = s3.head_object(
+            Bucket=REPORTS_BUCKET,
+            Key=key,
+        )
+        metadata = head.get("Metadata", {})
+    except (BotoCoreError, ClientError) as error:
         logging.exception(
-            "Unable to calculate report summary for %s: %s",
+            "Unable to read metadata for report %s: %s",
             key,
             error,
         )
-        summary = {
-            "order_count": 0,
-            "revenue": 0.0,
-        }
+        metadata = {}
+
+    start_time = parse_utc_metadata(
+        metadata.get("report-start-utc")
+    )
+    end_time = parse_utc_metadata(
+        metadata.get("report-end-utc")
+    )
+
+    summary = read_report_summary(key)
 
     url = s3.generate_presigned_url(
         "get_object",
@@ -632,47 +706,40 @@ def build_report_info(period):
     return {
         "period": period,
         "title": title,
+        "type_label": type_label,
         "key": key,
         "size": newest["Size"],
-        "last_modified": (
+        "last_modified": format_utc_timestamp_portable(
             newest["LastModified"]
-            .astimezone(timezone.utc)
-            .strftime("%Y-%m-%d %H:%M:%S UTC")
         ),
-        "url": url,
-        "window_text": window_text,
+        "generated_at": format_utc_timestamp_portable(
+            newest["LastModified"]
+        ),
+        "period_start": format_utc_timestamp(start_time),
+        "period_end": format_utc_timestamp(end_time),
+        "period_start_raw": start_time.isoformat() if start_time else None,
+        "period_end_raw": end_time.isoformat() if end_time else None,
         "order_count": summary["order_count"],
         "revenue": summary["revenue"],
-        "revenue_display": f"${summary['revenue']:,.2f}",
+        "url": url,
     }
 
 
 def latest_report():
-    """
-    The dashboard's Previous Day Report card uses the newest
-    previous-calendar-day report when one exists.
-    """
+    """Return the newest previous-day report."""
 
-    return build_report_info(
-        "24h"
-    )
+    return build_report_info("24h")
 
 
 def get_report_object(period):
-    """
-    Return the newest report object for a period.
-    """
+    """Return the newest report object and its S3 response."""
 
-    report = build_report_info(
-        period
-    )
+    report = build_report_info(period)
 
     if not report:
-
         return None
 
     try:
-
         response = s3.get_object(
             Bucket=REPORTS_BUCKET,
             Key=report["key"],
@@ -681,38 +748,25 @@ def get_report_object(period):
         return report, response
 
     except (BotoCoreError, ClientError) as error:
-
         logging.exception(
             "Unable to read report %s from S3: %s",
             period,
             error,
         )
-
         return None
 
 
-@app.route(
-    "/reports/<period>/view"
-)
+@app.route("/reports/<period>/view")
 @login_required
 def view_report(period):
-    """
-    Display the selected CSV report inside the dashboard.
-    """
+    """Display the selected CSV report inside the dashboard."""
 
-    if period not in {
-        "24h",
-        "monthly",
-    }:
-
+    if period not in {"24h", "monthly"}:
         return "Report not found", 404
 
-    result = get_report_object(
-        period
-    )
+    result = get_report_object(period)
 
     if not result:
-
         return (
             render_template_string(
                 """
@@ -727,14 +781,12 @@ def view_report(period):
                             background: #f4f6f9;
                             color: #172033;
                         }
-
                         .box {
                             background: white;
                             padding: 24px;
                             border-radius: 10px;
                             box-shadow: 0 2px 8px rgba(0,0,0,.08);
                         }
-
                         a {
                             display: inline-block;
                             margin-top: 16px;
@@ -746,81 +798,39 @@ def view_report(period):
                         }
                     </style>
                 </head>
-
                 <body>
-
                     <div class="box">
-
-                        <h1>
-                            {{ title }} Report
-                        </h1>
-
-                        <p>
-                            No report has been generated
-                            for this period yet.
-                        </p>
-
-                        <a
-                            href="{{ url_for('dashboard') }}"
-                        >
-                            Back to Dashboard
-                        </a>
-
+                        <h1>{{ title }} Report</h1>
+                        <p>No report has been generated for this period yet.</p>
+                        <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
                     </div>
-
                 </body>
                 </html>
                 """,
-                title=(
-                    "Previous Day"
-                    if period == "24h"
-                    else "Last Month"
-                ),
+                title=("Previous Day" if period == "24h" else "Last Month"),
             ),
             404,
         )
 
     report, response = result
 
-    raw_csv = response[
-        "Body"
-    ].read().decode(
+    raw_csv = response["Body"].read().decode(
         "utf-8",
         errors="replace",
     )
 
-    reader = csv.DictReader(
-        io.StringIO(raw_csv)
-    )
-
+    reader = csv.DictReader(io.StringIO(raw_csv))
     rows = list(reader)
-    summary = calculate_report_summary(rows)
-
-    report["order_count"] = summary["order_count"]
-    report["revenue"] = summary["revenue"]
-    report["revenue_display"] = f"${summary['revenue']:,.2f}"
 
     return render_template_string(
         """
         <!doctype html>
-
         <html>
-
         <head>
-
             <meta charset="utf-8">
-
-            <meta
-                name="viewport"
-                content="width=device-width, initial-scale=1"
-            >
-
-            <title>
-                CloudMart - {{ report.title }}
-            </title>
-
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>CloudMart - {{ report.title }} Report</title>
             <style>
-
                 body {
                     margin: 0;
                     padding: 24px 6%;
@@ -828,21 +838,18 @@ def view_report(period):
                     background: #f4f6f9;
                     color: #172033;
                 }
-
                 .box {
                     background: white;
                     border-radius: 10px;
                     padding: 24px;
                     box-shadow: 0 2px 8px rgba(0,0,0,.08);
                 }
-
                 .actions {
                     display: flex;
                     gap: 10px;
                     flex-wrap: wrap;
                     margin: 18px 0;
                 }
-
                 a.button {
                     display: inline-block;
                     padding: 10px 14px;
@@ -851,163 +858,70 @@ def view_report(period):
                     text-decoration: none;
                     border-radius: 6px;
                 }
-
-                a.secondary {
-                    background: #475569;
-                }
-
-                .muted {
-                    color: #667085;
-                    font-size: 13px;
-                }
-
-                .table-wrap {
-                    overflow-x: auto;
-                }
-
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    min-width: 650px;
-                }
-
-                th,
-                td {
+                a.secondary { background: #475569; }
+                .muted { color: #667085; font-size: 13px; }
+                .table-wrap { overflow-x: auto; }
+                table { width: 100%; border-collapse: collapse; min-width: 650px; }
+                th, td {
                     border-bottom: 1px solid #e5e7eb;
                     padding: 10px;
                     text-align: left;
                     vertical-align: top;
                     font-size: 14px;
                 }
-
-                th {
-                    background: #eef1f5;
-                }
-
+                th { background: #eef1f5; }
                 .empty {
                     padding: 20px;
                     background: #f8fafc;
                     border-radius: 8px;
                 }
-
             </style>
-
         </head>
-
         <body>
-
             <div class="box">
+                <h1>CloudMart {{ report.title }} Report</h1>
 
-                <h1>
-                    CloudMart {{ report.title }} Report
-                </h1>
-
-                <p class="muted">
-                    File: {{ report.key }}
-                </p>
-
-                <p class="muted">
-                    Last Modified:
-                    {{ report.last_modified }}
-                </p>
-
-                <p>
-                    <strong>
-                        Orders in report:
-                    </strong>
-
-                    {{ rows|length }}
-                </p>
+                <p><strong>Report Type:</strong> {{ report.type_label }}</p>
+                <p><strong>Report Period:</strong> {{ report.period_start }} → {{ report.period_end }}</p>
+                <p><strong>Orders:</strong> {{ report.order_count }}</p>
+                <p><strong>Revenue:</strong> ${{ "%.2f"|format(report.revenue) }}</p>
+                <p class="muted"><strong>File:</strong> {{ report.key }}</p>
+                <p class="muted"><strong>Generated:</strong> {{ report.generated_at }}</p>
 
                 <div class="actions">
-
-                    <a
-                        class="button"
-                        href="{{ url_for(
-                            'download_report',
-                            period=report.period
-                        ) }}"
-                    >
-                        Download CSV
-                    </a>
-
-                    <a
-                        class="button secondary"
-                        href="{{ url_for('dashboard') }}"
-                    >
-                        Back to Dashboard
-                    </a>
-
+                    <a class="button" href="{{ url_for('download_report', period=report.period) }}">Download CSV</a>
+                    <a class="button secondary" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
                 </div>
 
                 {% if rows %}
-
                     <div class="table-wrap">
-
                         <table>
-
                             <thead>
-
                                 <tr>
-
                                     {% for key in rows[0].keys() %}
-
-                                        <th>
-                                            {{ key }}
-                                        </th>
-
+                                        <th>{{ key }}</th>
                                     {% endfor %}
-
                                 </tr>
-
                             </thead>
-
                             <tbody>
-
                                 {% for row in rows %}
-
                                     <tr>
-
                                         {% for value in row.values() %}
-
-                                            <td>
-                                                {{
-                                                    value
-                                                    if value is not none
-                                                    else ""
-                                                }}
-                                            </td>
-
+                                            <td>{{ value if value is not none else "" }}</td>
                                         {% endfor %}
-
                                     </tr>
-
                                 {% endfor %}
-
                             </tbody>
-
                         </table>
-
                     </div>
-
                 {% else %}
-
                     <div class="empty">
-
-                        No orders were created during
-                        this report period.
-
-                        The report file is still valid
-                        and available for download.
-
+                        No orders were created during this report period.
+                        The report file is still valid and available for download.
                     </div>
-
                 {% endif %}
-
             </div>
-
         </body>
-
         </html>
         """,
         report=report,
@@ -1015,38 +929,21 @@ def view_report(period):
     )
 
 
-@app.route(
-    "/reports/<period>/download"
-)
+@app.route("/reports/<period>/download")
 @login_required
 def download_report(period):
-    """
-    Download the newest CSV report for the requested period.
-    """
+    """Download the newest CSV report for the requested period."""
 
-    if period not in {
-        "24h",
-        "monthly",
-    }:
-
+    if period not in {"24h", "monthly"}:
         return "Report not found", 404
 
-    result = get_report_object(
-        period
-    )
+    result = get_report_object(period)
 
     if not result:
-
-        return (
-            "Report not available yet",
-            404,
-        )
+        return "Report not available yet", 404
 
     report, response = result
-
-    csv_data = response[
-        "Body"
-    ].read()
+    csv_data = response["Body"].read()
 
     filename = (
         "cloudmart-previous-day-report.csv"
@@ -1058,9 +955,7 @@ def download_report(period):
         csv_data,
         mimetype="text/csv",
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="{filename}"'
-            )
+            "Content-Disposition": f'attachment; filename="{filename}"'
         },
     )
 
@@ -1254,26 +1149,24 @@ def dashboard():
         }
     ]
 
+    report_24h = build_report_info("24h")
+    report_monthly = build_report_info("monthly")
+
     return render_template(
         "index.html",
         products=products,
         orders=orders,
         failed_orders=failed_orders,
-        cloudwatch_dashboard_url=(
-            CLOUDWATCH_DASHBOARD_URL
-        ),
-        report=latest_report(),
-        report_24h=build_report_info(
-            "24h"
-        ),
-        report_monthly=build_report_info(
-            "monthly"
+        cloudwatch_dashboard_url=CLOUDWATCH_DASHBOARD_URL,
+        report=report_24h,
+        report_24h=report_24h,
+        report_monthly=report_monthly,
+        previous_day_revenue=(
+            report_24h["revenue"] if report_24h else 0.0
         ),
         errors=errors,
         generated_at=(
-            datetime.now(
-                timezone.utc
-            ).strftime(
+            datetime.now(timezone.utc).strftime(
                 "%Y-%m-%d %H:%M:%S UTC"
             )
         ),
