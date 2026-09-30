@@ -811,29 +811,82 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The dashboard EC2 instance is owned by cloudmart-app.
+          # cloudmart-monitoring does not own DashboardInstanceId, so do not
+          # depend on an output from that stack. Keep tag discovery as a
+          # recovery path for older deployments.
           INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-monitoring \
+            --stack-name cloudmart-app \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
-            --output text)
+            --output text 2>/dev/null || true)
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
+            echo "DashboardInstanceId not found in cloudmart-app; checking EC2 tags..."
+
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --region "$AWS_REGION" \
+              --filters \
+                "Name=tag:Project,Values=CloudMart" \
+                "Name=tag:Component,Values=Dashboard" \
+                "Name=instance-state-name,Values=pending,running" \
+              --query "Reservations[].Instances | sort_by(@, &LaunchTime)[-1].InstanceId" \
+              --output text 2>/dev/null || true)
+          fi
+
+          if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
+            echo "ERROR: Could not find the CloudMart dashboard EC2 instance."
+            echo "CloudFormation stack: cloudmart-app"
+            echo "Expected output: DashboardInstanceId"
+            echo "Expected EC2 tags: Project=CloudMart, Component=Dashboard"
             exit 1
           fi
 
           echo "Dashboard EC2 instance: $INSTANCE_ID"
 
+          echo "--- Dashboard EC2 details ---"
+          aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --query "Reservations[0].Instances[0].[State.Name,PrivateIpAddress,PublicIpAddress,SubnetId,IamInstanceProfile.Arn]" \
+            --output table
+
+          # Do not call ssm:DescribeInstanceInformation here because the
+          # deployment role only needs the permission to send the deployment
+          # command and read its result. Retry SendCommand until the EC2
+          # instance has registered with Systems Manager.
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "Deploy CloudMart Flask dashboard" \
-            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
-            --region "$AWS_REGION" \
-            --query "Command.CommandId" \
-            --output text)
+          COMMAND_ID=""
+          for attempt in {1..60}; do
+            echo "Waiting for dashboard EC2 to accept an SSM command: $attempt/60"
+
+            SEND_ERROR=$(mktemp)
+            COMMAND_ID=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Deploy CloudMart Flask dashboard" \
+              --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
+              --region "$AWS_REGION" \
+              --query "Command.CommandId" \
+              --output text 2>"$SEND_ERROR" || true)
+
+            if [[ -n "$COMMAND_ID" && "$COMMAND_ID" != "None" ]]; then
+              rm -f "$SEND_ERROR"
+              break
+            fi
+
+            echo "SSM command not accepted yet:"
+            cat "$SEND_ERROR" || true
+            rm -f "$SEND_ERROR"
+            sleep 5
+          done
+
+          if [[ -z "$COMMAND_ID" || "$COMMAND_ID" == "None" ]]; then
+            echo "ERROR: Dashboard EC2 instance did not become available to SSM within 5 minutes."
+            echo "Instance: $INSTANCE_ID"
+            exit 1
+          fi
 
           echo "SSM command: $COMMAND_ID"
 
