@@ -951,8 +951,81 @@ def lambda_handler(event, context):
         # ----------------------------------------------------
 
         if method == "GET" and is_product_route(path):
-            role = "products"
-            customer_id = None
+            # GET /products and GET /products/{id} are public when
+            # no Authorization header is supplied. If a client does
+            # supply a token, however, it must still be a valid token;
+            # an invalid token must never be treated as anonymous access.
+            incoming_token = extract_bearer_token(event)
+
+            if incoming_token is None:
+                role = "products"
+                customer_id = None
+
+                permission = get_route_permission(
+                    method,
+                    path,
+                )
+
+                if permission != "products":
+                    return json_response(
+                        404,
+                        {
+                            "error": "not_found",
+                            "message": "No matching route",
+                        },
+                    )
+
+                target_function = get_target_lambda(path)
+
+                if not target_function:
+                    return json_response(
+                        404,
+                        {
+                            "error": "not_found",
+                            "message": "Target Lambda not found",
+                        },
+                    )
+
+                request_context = event.setdefault(
+                    "requestContext",
+                    {},
+                )
+
+                authorizer_context = request_context.setdefault(
+                    "authorizer",
+                    {},
+                )
+
+                authorizer_context["role"] = role
+
+                log(
+                    "INFO",
+                    "Public product GET authorized without token",
+                    method=method,
+                    path=path,
+                    target=target_function,
+                )
+
+                return invoke_downstream_lambda(
+                    target_function,
+                    event,
+                )
+
+            # A supplied token must be valid. Do not bypass authentication
+            # merely because this is a public product GET route.
+            identity = authenticate_token(incoming_token)
+
+            if not identity:
+                log(
+                    "WARN",
+                    "Invalid token supplied for product GET",
+                    method=method,
+                    path=path,
+                )
+                return unauthorized()
+
+            role = identity["role"]
+            customer_id = identity.get("customer_id")
 
             permission = get_route_permission(
                 method,
@@ -967,6 +1040,16 @@ def lambda_handler(event, context):
                         "message": "No matching route",
                     },
                 )
+
+            if not role_allows(role, permission, method):
+                log(
+                    "WARN",
+                    "RBAC permission denied for product GET",
+                    role=role,
+                    method=method,
+                    path=path,
+                )
+                return forbidden()
 
             target_function = get_target_lambda(path)
 
@@ -991,9 +1074,14 @@ def lambda_handler(event, context):
 
             authorizer_context["role"] = role
 
+            if customer_id is not None:
+                authorizer_context["customer_id"] = customer_id
+
             log(
                 "INFO",
-                "Public product GET authorized",
+                "Authenticated product GET authorized",
+                role=role,
+                customer_id=customer_id,
                 method=method,
                 path=path,
                 target=target_function,
