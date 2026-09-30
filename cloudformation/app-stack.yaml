@@ -21,6 +21,17 @@ Parameters:
     Description: Email address to receive low-stock and order confirmation alerts
 
 
+  DashboardInstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for the CloudMart Flask dashboard
+
+  DashboardAmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0b245cc5f82576748
+    Description: Amazon Linux 2023 AMI for the CloudMart dashboard EC2 instance
+
+
 Resources:
 
   # ---------- EventBridge Event Bus ----------
@@ -257,6 +268,157 @@ Resources:
               #<customerId> was cancelled from status <previousStatus>.
               Inventory has been restored."
 
+
+  # ---------- EC2 DASHBOARD ----------
+  # CloudFormation creates the dashboard host. The UserData below is
+  # intentionally limited to EC2/SSM bootstrap. GitHub Actions deploys
+  # the Flask application through AWS Systems Manager after the instance
+  # becomes Online.
+  DashboardInstanceV2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref DashboardAmiId
+      InstanceType: !Ref DashboardInstanceType
+      SubnetId:
+        Fn::ImportValue: !Sub cloudmart-${Environment}-public-subnet-id
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-sg-id
+      IamInstanceProfile:
+        Fn::Select:
+          - 1
+          - Fn::Split:
+              - /
+              - Fn::ImportValue: !Sub cloudmart-${Environment}-ec2-dashboard-profile-arn
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-${Environment}-dashboard
+        - Key: Project
+          Value: CloudMart
+        - Key: Component
+          Value: Dashboard
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              set -euxo pipefail
+
+              # UserData runs as root. Keep a simple bootstrap log so that
+              # SSM/bootstrap failures are visible without needing SSM first.
+              exec > >(tee -a /var/log/cloudmart-ssm-bootstrap.log) 2>&1
+
+              REGION="${AWS_REGION_VALUE}"
+
+              echo "========================================"
+              echo "CloudMart dashboard EC2 bootstrap started"
+              date
+              echo "Region: $REGION"
+              echo "========================================"
+
+              echo "Checking EC2 IAM role credentials..."
+
+              # Wait for the instance profile credentials to become available.
+              # IMDSv2 is required by the instance MetadataOptions above.
+              TOKEN=""
+              for attempt in $(seq 1 30); do
+                TOKEN=$(curl -fsS --max-time 3 \
+                  -X PUT \
+                  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+                  http://169.254.169.254/latest/api/token 2>/dev/null || true)
+
+                if [ -n "$TOKEN" ]; then
+                  ROLE_NAME=$(curl -fsS --max-time 3 \
+                    -H "X-aws-ec2-metadata-token: $TOKEN" \
+                    http://169.254.169.254/latest/meta-data/iam/security-credentials/ \
+                    2>/dev/null || true)
+
+                  if [ -n "$ROLE_NAME" ]; then
+                    echo "EC2 IAM role detected: $ROLE_NAME"
+                    break
+                  fi
+                fi
+
+                echo "Waiting for EC2 IAM credentials: $attempt/30"
+                sleep 5
+              done
+
+              if [ -z "$TOKEN" ] || [ -z "${ROLE_NAME:-}" ]; then
+                echo "ERROR: EC2 instance profile credentials were not available."
+                exit 1
+              fi
+
+              echo "Installing/checking SSM Agent..."
+
+              # Amazon Linux 2023 normally includes the SSM Agent. If it is
+              # absent, install it from the configured package repositories.
+              if ! command -v amazon-ssm-agent >/dev/null 2>&1; then
+                echo "SSM Agent binary not found; installing it..."
+                dnf install -y amazon-ssm-agent
+              else
+                echo "SSM Agent binary already exists."
+              fi
+
+              echo "Starting SSM Agent..."
+              systemctl enable amazon-ssm-agent
+              systemctl restart amazon-ssm-agent
+
+              sleep 5
+
+              echo "SSM Agent service status:"
+              systemctl status amazon-ssm-agent --no-pager || true
+
+              if ! systemctl is-active --quiet amazon-ssm-agent; then
+                echo "ERROR: amazon-ssm-agent.service is not active."
+                journalctl -u amazon-ssm-agent --no-pager -n 100 || true
+                exit 1
+              fi
+
+              echo "Verifying AWS credentials from the EC2 instance..."
+
+              # AWS CLI is normally available on the selected Amazon Linux AMI.
+              # Install it if necessary before the STS verification.
+              if ! command -v aws >/dev/null 2>&1; then
+                dnf install -y awscli
+              fi
+
+              for attempt in $(seq 1 30); do
+                if aws sts get-caller-identity --region "$REGION" >/tmp/cloudmart-sts.json 2>/tmp/cloudmart-sts-error.log; then
+                  echo "EC2 IAM credentials are working:"
+                  cat /tmp/cloudmart-sts.json
+                  break
+                fi
+
+                echo "Waiting for working EC2 IAM credentials: $attempt/30"
+                cat /tmp/cloudmart-sts-error.log || true
+                sleep 5
+              done
+
+              if ! aws sts get-caller-identity --region "$REGION" >/tmp/cloudmart-sts.json 2>/tmp/cloudmart-sts-error.log; then
+                echo "ERROR: EC2 IAM credentials cannot call STS."
+                cat /tmp/cloudmart-sts-error.log || true
+                exit 1
+              fi
+
+              echo "Testing SSM endpoint connectivity from the EC2 instance..."
+
+              # HTTP 400 is acceptable here: it proves the HTTPS endpoint is
+              # reachable. We only need to fail on connection/DNS failure.
+              curl -fsS --connect-timeout 10 \
+                "https://ssm.${REGION}.amazonaws.com" \
+                -o /tmp/cloudmart-ssm-response.txt || true
+
+              curl -fsS --connect-timeout 10 \
+                "https://ssmmessages.${REGION}.amazonaws.com" \
+                -o /tmp/cloudmart-ssmmessages-response.txt || true
+
+              echo "SSM Agent bootstrap completed successfully."
+              echo "The instance will now register with AWS Systems Manager."
+              date
+            - AWS_REGION_VALUE: !Ref AWS::Region
+
   # ---------- One-time schema apply ----------
   ApplySchemaFunction:
     Type: AWS::Lambda::Function
@@ -319,4 +481,23 @@ Outputs:
     Value: !Ref OrderFunction
     Export:
       Name: !Sub cloudmart-${Environment}-order-function-name
+
+
+  DashboardInstanceId:
+    Description: CloudFormation-created EC2 instance hosting the Flask dashboard
+    Value: !Ref DashboardInstanceV2
+    Export:
+      Name: !Sub cloudmart-${Environment}-dashboard-instance-id
+
+  DashboardPublicIp:
+    Description: Public IPv4 address of the CloudMart dashboard EC2 instance
+    Value: !GetAtt DashboardInstanceV2.PublicIp
+    Export:
+      Name: !Sub cloudmart-${Environment}-dashboard-public-ip
+
+  DashboardPublicDnsName:
+    Description: Public DNS name of the CloudMart dashboard EC2 instance
+    Value: !GetAtt DashboardInstanceV2.PublicDnsName
+    Export:
+      Name: !Sub cloudmart-${Environment}-dashboard-public-dns-name
 
