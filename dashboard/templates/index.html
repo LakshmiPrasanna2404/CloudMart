@@ -127,6 +127,38 @@
             color: #667085;
             padding: 10px 0;
         }
+
+        .report-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 220px));
+            gap: 12px;
+            margin: 14px 0 18px;
+        }
+
+        .report-stat {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+
+        .report-stat span {
+            display: block;
+            color: #667085;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .report-stat strong {
+            font-size: 22px;
+        }
+
+        .report-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
     </style>
 </head>
 
@@ -206,7 +238,7 @@
         <div class="card">
 
             <div>
-                Products Loaded
+                Products
             </div>
 
             <div class="number">
@@ -221,7 +253,7 @@
         <div class="card">
 
             <div>
-                Recent Orders Loaded
+                Recent Orders
             </div>
 
             <div class="number">
@@ -261,12 +293,12 @@
         </div>
 
 
-        <!-- Latest Report -->
+        <!-- Previous Day Report -->
 
         <div class="card">
 
             <div>
-                Previous Day Report
+                Latest Report
             </div>
 
             <div class="number">
@@ -289,8 +321,8 @@
         </h2>
 
         <p class="muted">
-            Reports are generated automatically and stored securely in S3.
-            Revenue is included inside every CSV report.
+            Reports are generated automatically at 12:00 AM UTC and stored securely in S3.
+            A report is created even when there are no orders in the reporting period.
         </p>
 
 
@@ -300,65 +332,47 @@
             Previous Day Report
         </h3>
 
-        <p class="muted">
-            Reporting window: previous day 12:00 AM UTC
-            to today 12:00 AM UTC.
-        </p>
-
-
         {% if report_24h %}
 
+            <p class="muted">
+                {{ report_24h.window_text }}
+            </p>
+
+            <div class="report-stats">
+
+                <div class="report-stat">
+                    <span>Orders</span>
+                    <strong>{{ report_24h.order_count }}</strong>
+                </div>
+
+                <div class="report-stat">
+                    <span>Revenue</span>
+                    <strong>{{ report_24h.revenue_display }}</strong>
+                </div>
+
+            </div>
+
             <p>
-
-                <strong>
-                    Status:
-                </strong>
-
+                <strong>Status:</strong>
                 Report available
-
             </p>
 
-
             <p>
-
-                <strong>
-                    File:
-                </strong>
-
+                <strong>File:</strong>
                 {{ report_24h.key }}
-
             </p>
 
-
             <p>
-
-                <strong>
-                    Last Modified:
-                </strong>
-
+                <strong>Last Modified:</strong>
                 {{ report_24h.last_modified }}
-
             </p>
-
 
             <p>
-
-                <strong>
-                    Size:
-                </strong>
-
+                <strong>Size:</strong>
                 {{ report_24h.size }} bytes
-
             </p>
 
-
-            <div
-                style="
-                    display:flex;
-                    gap:10px;
-                    flex-wrap:wrap;
-                "
-            >
+            <div class="report-actions">
 
                 <a
                     class="button"
@@ -366,7 +380,6 @@
                 >
                     View Report
                 </a>
-
 
                 <a
                     class="button"
@@ -377,7 +390,6 @@
 
             </div>
 
-
         {% else %}
 
             <p class="empty-message">
@@ -386,80 +398,54 @@
 
         {% endif %}
 
-    </section>
 
-
-
-    <!-- ========================================================= -->
-    <!-- LAST MONTH REPORT -->
-    <!-- ========================================================= -->
-
-    <section>
+        <!-- Last Month -->
 
         <h3>
             Last Month Report
         </h3>
 
-        <p class="muted">
-            Reporting window: first day of the previous month
-            12:00 AM UTC to first day of the current month
-            12:00 AM UTC.
-        </p>
-
-
         {% if report_monthly %}
 
+            <p class="muted">
+                {{ report_monthly.window_text }}
+            </p>
+
+            <div class="report-stats">
+
+                <div class="report-stat">
+                    <span>Orders</span>
+                    <strong>{{ report_monthly.order_count }}</strong>
+                </div>
+
+                <div class="report-stat">
+                    <span>Revenue</span>
+                    <strong>{{ report_monthly.revenue_display }}</strong>
+                </div>
+
+            </div>
+
             <p>
-
-                <strong>
-                    Status:
-                </strong>
-
+                <strong>Status:</strong>
                 Report available
-
             </p>
 
-
             <p>
-
-                <strong>
-                    File:
-                </strong>
-
+                <strong>File:</strong>
                 {{ report_monthly.key }}
-
             </p>
 
-
             <p>
-
-                <strong>
-                    Last Modified:
-                </strong>
-
+                <strong>Last Modified:</strong>
                 {{ report_monthly.last_modified }}
-
             </p>
-
 
             <p>
-
-                <strong>
-                    Size:
-                </strong>
-
+                <strong>Size:</strong>
                 {{ report_monthly.size }} bytes
-
             </p>
 
-
-            <div
-                style="
-                    display:flex;
-                    gap:10px;
-                    flex-wrap:wrap;
-                "
-            >
+            <div class="report-actions">
 
                 <a
                     class="button"
@@ -467,7 +453,6 @@
                 >
                     View Monthly Report
                 </a>
-
 
                 <a
                     class="button"
@@ -478,11 +463,11 @@
 
             </div>
 
-
         {% else %}
 
             <p class="empty-message">
                 No Last Month report is available yet.
+                The report will still be created even if there were zero orders.
             </p>
 
         {% endif %}
