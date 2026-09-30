@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 
 import boto3
@@ -30,7 +31,6 @@ ssm = boto3.client("ssm")
 # ============================================================
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "prod")
-
 REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.getenv("DB_NAME", "cloudmart")
@@ -127,13 +127,64 @@ def fetch_orders(start_time, end_time):
 
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                query,
-                (start_time, end_time),
-            )
+            cursor.execute(query, (start_time, end_time))
             return cursor.fetchall()
     finally:
         connection.close()
+
+
+# ============================================================
+# REPORT SUMMARY
+# ============================================================
+
+def calculate_summary(rows):
+    """
+    Calculate report order count and revenue.
+
+    total_amount is repeated for each order_items row, so each
+    order is counted only once. Cancelled and failed orders are
+    excluded from revenue.
+    """
+
+    orders = {}
+
+    for row in rows:
+        order_id = str(row.get("order_id", "")).strip()
+
+        if not order_id:
+            continue
+
+        if order_id not in orders:
+            orders[order_id] = row
+
+    revenue = Decimal("0")
+
+    for row in orders.values():
+        status = str(row.get("status", "")).strip().upper()
+
+        if status in {
+            "CANCELLED",
+            "CANCELED",
+            "FAILED",
+            "FAILURE",
+        }:
+            continue
+
+        try:
+            revenue += Decimal(
+                str(row.get("total_amount") or "0")
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            logger.warning(
+                "Invalid total_amount for order %s: %r",
+                row.get("order_id"),
+                row.get("total_amount"),
+            )
+
+    return {
+        "order_count": len(orders),
+        "revenue": float(revenue),
+    }
 
 
 # ============================================================
@@ -181,10 +232,11 @@ def upload_report(
     start_time,
     end_time,
 ):
-    """Upload a report CSV to S3, including its exact UTC window as metadata."""
+    """Upload a report CSV to S3 with exact period metadata."""
 
     key = f"{prefix.rstrip('/')}/{filename}"
     csv_data = build_csv(rows)
+    summary = calculate_summary(rows)
 
     s3.put_object(
         Bucket=REPORTS_BUCKET,
@@ -197,6 +249,8 @@ def upload_report(
             "report-start-utc": start_time.isoformat(),
             "report-end-utc": end_time.isoformat(),
             "order-row-count": str(len(rows)),
+            "order-count": str(summary["order_count"]),
+            "revenue": f"{summary['revenue']:.2f}",
         },
     )
 
@@ -215,15 +269,23 @@ def upload_report(
     )
 
     logger.info(
-        "%s report row count: %s",
+        "%s report order count: %s",
         report_type,
-        len(rows),
+        summary["order_count"],
+    )
+
+    logger.info(
+        "%s report revenue: %.2f",
+        report_type,
+        summary["revenue"],
     )
 
     return {
         "bucket": REPORTS_BUCKET,
         "key": key,
         "row_count": len(rows),
+        "order_count": summary["order_count"],
+        "revenue": summary["revenue"],
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
     }
