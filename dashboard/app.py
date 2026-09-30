@@ -552,7 +552,7 @@ def build_report_info(period):
             f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
         )
 
-        title = "Last 24 Hours"
+        title = "Previous Day"
 
     elif period == "monthly":
 
@@ -560,7 +560,7 @@ def build_report_info(period):
             f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
         )
 
-        title = "Monthly"
+        title = "Last Month"
 
     else:
 
@@ -609,7 +609,7 @@ def build_report_info(period):
 def latest_report():
     """
     The dashboard's Latest Report card uses the newest
-    Last-24-Hours report when one exists.
+    Previous Day report when one exists.
     """
 
     return build_report_info(
@@ -731,9 +731,9 @@ def view_report(period):
                 </html>
                 """,
                 title=(
-                    "Last 24 Hours"
+                    "Previous Day"
                     if period == "24h"
-                    else "Monthly"
+                    else "Last Month"
                 ),
             ),
             404,
@@ -1003,9 +1003,9 @@ def download_report(period):
     ].read()
 
     filename = (
-        "cloudmart-last-24-hours-report.csv"
+        "cloudmart-previous-day-report.csv"
         if period == "24h"
-        else "cloudmart-monthly-report.csv"
+        else "cloudmart-last-month-report.csv"
     )
 
     return Response(
