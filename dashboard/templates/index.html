@@ -3,33 +3,30 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
     <title>CloudMart Operations Dashboard</title>
-
     <style>
         :root {
             font-family: Arial, sans-serif;
             color: #172033;
             background: #f4f6f9;
         }
-
-        body {
-            margin: 0;
-        }
-
+        body { margin: 0; }
         header {
             background: #172033;
             color: white;
             padding: 24px 6%;
         }
-
+        header .subtitle {
+            color: #d4d9e2;
+            font-size: 13px;
+            margin-top: 8px;
+        }
         nav {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 18px;
         }
-
         nav a {
             color: white;
             border: 1px solid #64748b;
@@ -38,104 +35,26 @@
             text-decoration: none;
             font-size: 14px;
         }
-
-        nav a:hover {
-            background: #334155;
-        }
-
-        main {
-            padding: 24px 6%;
-        }
-
+        nav a:hover { background: #334155; }
+        main { padding: 24px 6%; }
         .cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
         }
-
-        .card,
-        section {
+        .card, section {
             background: white;
             border-radius: 10px;
             padding: 18px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
             margin-bottom: 24px;
         }
-
         .number {
             font-size: 30px;
             font-weight: bold;
             margin-top: 8px;
         }
-
-        .card-subtitle {
-            color: #667085;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-
-        .report-grid {
-            display: grid;
-            grid-template-columns: repeat(
-                auto-fit,
-                minmax(280px, 1fr)
-            );
-            gap: 18px;
-        }
-
-        .report-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            padding: 18px;
-            background: #fbfcfe;
-        }
-
-        .report-card h3 {
-            margin-top: 0;
-        }
-
-        .report-metrics {
-            display: grid;
-            grid-template-columns: repeat(
-                2,
-                minmax(0, 1fr)
-            );
-            gap: 10px;
-            margin: 14px 0;
-        }
-
-        .metric {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 10px;
-        }
-
-        .metric-label {
-            color: #667085;
-            font-size: 12px;
-        }
-
-        .metric-value {
-            font-size: 20px;
-            font-weight: bold;
-            margin-top: 4px;
-        }
-
-        .period {
-            background: #eef4ff;
-            border-left: 4px solid #2563eb;
-            padding: 10px 12px;
-            margin: 12px 0;
-            border-radius: 4px;
-        }
-
-        .success {
-            color: #027a48;
-            font-weight: bold;
-        }
-
         .error {
             background: #fff0f0;
             color: #9b1c1c;
@@ -143,30 +62,50 @@
             padding: 12px;
             margin-bottom: 10px;
         }
-
-        .table-wrap {
-            overflow-x: auto;
+        .muted { color: #667085; font-size: 13px; }
+        .report-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 14px;
         }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 650px;
+        .report-card {
+            border: 1px solid #dbe2ea;
+            border-radius: 8px;
+            padding: 16px;
         }
-
-        th,
-        td {
-            border-bottom: 1px solid #e5e7eb;
+        .report-status {
+            color: #008a4b;
+            font-weight: bold;
+            margin: 12px 0;
+        }
+        .report-period {
+            background: #eef4ff;
+            border-left: 4px solid #2563eb;
             padding: 10px;
-            text-align: left;
-            vertical-align: top;
-            font-size: 14px;
+            margin: 10px 0;
         }
-
-        th {
-            background: #eef1f5;
+        .report-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 12px 0;
         }
-
+        .report-stat {
+            border: 1px solid #e1e6ed;
+            border-radius: 7px;
+            padding: 10px;
+        }
+        .report-stat strong {
+            display: block;
+            font-size: 20px;
+            margin-top: 4px;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
         a.button {
             display: inline-block;
             padding: 10px 14px;
@@ -174,958 +113,266 @@
             color: white;
             text-decoration: none;
             border-radius: 6px;
-            margin-right: 6px;
-            margin-top: 5px;
         }
-
-        a.button:hover {
-            background: #1d4ed8;
+        a.button:hover { background: #1d4ed8; }
+        .table-wrap { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 650px;
         }
-
-        a.button.secondary {
-            background: #475569;
+        th, td {
+            border-bottom: 1px solid #e5e7eb;
+            padding: 10px;
+            text-align: left;
+            vertical-align: top;
+            font-size: 14px;
         }
-
-        .muted {
-            color: #667085;
-            font-size: 13px;
-        }
-
-        .status-cancelled {
-            color: #b42318;
-            font-weight: bold;
-        }
-
-        .empty-message {
-            color: #667085;
-            padding: 10px 0;
-        }
-
-        .file-name {
-            word-break: break-word;
-            font-family: monospace;
-            font-size: 12px;
-        }
-
-        .report-note {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 12px;
-            margin-top: 15px;
-        }
-
-        .report-note strong {
-            color: #172033;
-        }
-
-        @media (max-width: 700px) {
-            header,
-            main {
-                padding-left: 4%;
-                padding-right: 4%;
-            }
-
-            .report-metrics {
-                grid-template-columns: 1fr;
-            }
-
-            a.button {
-                margin-bottom: 5px;
-            }
+        th { background: #eef1f5; }
+        .status-cancelled { color: #b42318; font-weight: bold; }
+        .empty-message { color: #667085; padding: 10px 0; }
+        @media (max-width: 600px) {
+            .report-grid { grid-template-columns: 1fr; }
+            .report-stats { grid-template-columns: 1fr; }
         }
     </style>
 </head>
-
 <body>
-
 <header>
-
     <h1>CloudMart Operations Dashboard</h1>
-
-    <div
-        class="muted"
-        style="color: #d4d9e2;"
-    >
-        Read-only inventory, orders and scheduled reports
-    </div>
-
+    <div class="subtitle">Read-only inventory, orders and reports</div>
     <nav aria-label="Dashboard navigation">
-
-        <a href="#inventory">
-            Inventory
-        </a>
-
-        <a href="#orders">
-            Orders
-        </a>
-
-        <a href="#cancelled-orders">
-            Cancelled Orders
-        </a>
-
-        <a href="#reports">
-            Reports
-        </a>
-
-        <a
-            href="{{ cloudwatch_dashboard_url }}"
-            target="_blank"
-            rel="noopener noreferrer"
-        >
-            CloudWatch Monitoring ↗
-        </a>
-
-        <a href="{{ url_for('logout') }}">
-            Logout
-        </a>
-
+        <a href="#inventory">Inventory</a>
+        <a href="#orders">Orders</a>
+        <a href="#cancelled-orders">Cancelled Orders</a>
+        <a href="#reports">Reports</a>
+        <a href="{{ cloudwatch_dashboard_url }}" target="_blank" rel="noopener noreferrer">CloudWatch Monitoring ↗</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
     </nav>
-
 </header>
 
-
 <main>
-
-    <p class="muted">
-        Generated: {{ generated_at }}
-    </p>
-
-
-    <!-- ========================================================= -->
-    <!-- ERROR MESSAGES -->
-    <!-- ========================================================= -->
-
     {% for error in errors %}
-
-        <div class="error">
-            {{ error }}
-        </div>
-
+        <div class="error">{{ error }}</div>
     {% endfor %}
 
-
-    <!-- ========================================================= -->
-    <!-- SUMMARY CARDS -->
-    <!-- ========================================================= -->
-
     <div class="cards">
-
-        <!-- Products -->
         <div class="card">
-
-            <div>
-                Products Loaded
-            </div>
-
-            <div class="number">
-                {{ products|length }}
-            </div>
-
+            <div>Products Loaded</div>
+            <div class="number">{{ products|length }}</div>
         </div>
 
-
-        <!-- Recent Orders -->
         <div class="card">
-
-            <div>
-                Recent Orders Loaded
-            </div>
-
-            <div class="number">
-                {{ orders|length }}
-            </div>
-
+            <div>Recent Orders Loaded</div>
+            <div class="number">{{ orders|length }}</div>
         </div>
 
-
-        <!-- Cancelled Orders -->
         <div class="card">
-
-            <div>
-                Cancelled Orders
-            </div>
-
+            <div>Cancelled Orders</div>
             <div class="number">
-
                 {% set cancelled_count = namespace(value=0) %}
-
                 {% for row in orders %}
-
-                    {% if row.get('status')|upper
-                        in ['CANCELLED', 'CANCELED'] %}
-
-                        {% set cancelled_count.value =
-                            cancelled_count.value + 1 %}
-
+                    {% if row.get('status') == 'CANCELLED' %}
+                        {% set cancelled_count.value = cancelled_count.value + 1 %}
                     {% endif %}
-
                 {% endfor %}
-
                 {{ cancelled_count.value }}
-
             </div>
-
         </div>
 
-
-        <!-- Previous Day Revenue -->
         <div class="card">
-
-            <div>
-                Previous Day Revenue
-            </div>
-
-            <div class="number">
-                ${{ "%.2f"|format(previous_day_revenue) }}
-            </div>
-
-            <div class="card-subtitle">
-                Revenue from the latest previous-day report
-            </div>
-
+            <div>Previous Day Revenue</div>
+            <div class="number">${{ "%.2f"|format(previous_day_revenue|default(0, true)) }}</div>
         </div>
 
-
-        <!-- Latest Report -->
         <div class="card">
-
-            <div>
-                Latest Report
-            </div>
-
-            {% if report %}
-
-                <div
-                    class="number"
-                    style="font-size: 22px;"
-                >
-                    Previous Day
-                </div>
-
-                <div class="card-subtitle">
-
-                    {{ report.period_start }}
-
-                    →
-
-                    {{ report.period_end }}
-
-                </div>
-
-            {% else %}
-
-                <div class="number">
-                    None
-                </div>
-
+            <div>Latest Report</div>
+            <div class="number">{{ "Available" if report else "None" }}</div>
+            {% if report_24h %}
+                <div class="muted">Previous Day</div>
             {% endif %}
-
         </div>
-
     </div>
 
-
-    <!-- ========================================================= -->
-    <!-- REPORTS -->
-    <!-- ========================================================= -->
-
     <section id="reports">
-
-        <h2>
-            Reports
-        </h2>
-
-
-        <p class="muted">
-
-            Reports are generated automatically at
-            <strong>12:00 AM UTC every day</strong>
-            and stored securely in S3.
-
-            A report is created even when there are zero orders.
-
-        </p>
-
+        <h2>Reports</h2>
 
         <div class="report-grid">
-
-
-            <!-- ================================================= -->
-            <!-- PREVIOUS DAY REPORT -->
-            <!-- ================================================= -->
-
             <div class="report-card">
-
-                <h3>
-                    Previous Day Report
-                </h3>
-
+                <h3>Previous Day Report</h3>
 
                 {% if report_24h %}
+                    <div class="report-status">• Report available</div>
 
-                    <div class="success">
-                        ● Report available
-                    </div>
-
-
-                    <div class="period">
-
-                        <strong>
-                            Report Period
-                        </strong>
-
-                        <br>
-
-                        {{ report_24h.period_start }}
-
-                        <br>
-
-                        →
-
-                        <br>
-
-                        {{ report_24h.period_end }}
-
-                    </div>
-
-
-                    <div class="report-metrics">
-
-                        <div class="metric">
-
-                            <div class="metric-label">
-                                Orders
-                            </div>
-
-                            <div class="metric-value">
-                                {{ report_24h.order_count }}
-                            </div>
-
+                    {% if report_24h.period_start and report_24h.period_end %}
+                        <div class="report-period">
+                            <strong>Report Period</strong><br>
+                            {{ report_24h.period_start }}<br>
+                            → {{ report_24h.period_end }}
                         </div>
+                    {% endif %}
 
-
-                        <div class="metric">
-
-                            <div class="metric-label">
-                                Revenue
-                            </div>
-
-                            <div class="metric-value">
-
-                                ${{ "%.2f"|format(
-                                    report_24h.revenue
-                                ) }}
-
-                            </div>
-
+                    <div class="report-stats">
+                        <div class="report-stat">
+                            Orders
+                            <strong>{{ report_24h.orders|default(0, true) }}</strong>
                         </div>
-
+                        <div class="report-stat">
+                            Revenue
+                            <strong>${{ "%.2f"|format(report_24h.revenue|default(0, true)) }}</strong>
+                        </div>
                     </div>
 
-
-                    <p>
-                        <strong>
-                            Report Type:
-                        </strong>
-
-                        {{ report_24h.type_label }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            Generated:
-                        </strong>
-
-                        {{ report_24h.generated_at }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            Last Modified:
-                        </strong>
-
-                        {{ report_24h.last_modified }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            File Size:
-                        </strong>
-
-                        {{ report_24h.size }} bytes
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            S3 File:
-                        </strong>
-                    </p>
-
-                    <p class="file-name">
-                        {{ report_24h.key }}
-                    </p>
-
-
-                    <a
-                        class="button"
-                        href="{{ url_for(
-                            'view_report',
-                            period='24h'
-                        ) }}"
-                    >
-                        View Report
-                    </a>
-
-
-                    <a
-                        class="button"
-                        href="{{ url_for(
-                            'download_report',
-                            period='24h'
-                        ) }}"
-                    >
-                        Download CSV
-                    </a>
-
-
-                    <div class="report-note">
-
-                        <strong>
-                            Reporting rule:
-                        </strong>
-
-                        This report contains orders created from
-                        the previous calendar day's
-                        <strong>00:00 UTC</strong>
-                        up to, but not including,
-                        today's
-                        <strong>00:00 UTC</strong>.
-
+                    <div class="actions">
+                        <a class="button" href="{{ url_for('view_report', period='24h') }}">View Report</a>
+                        <a class="button" href="{{ url_for('download_report', period='24h') }}">Download CSV</a>
                     </div>
-
-
                 {% else %}
-
-                    <p class="empty-message">
-
-                        No Previous Day report is available yet.
-
-                    </p>
-
+                    <p class="empty-message">No previous day report is available yet.</p>
                 {% endif %}
-
             </div>
-
-
-            <!-- ================================================= -->
-            <!-- LAST MONTH REPORT -->
-            <!-- ================================================= -->
 
             <div class="report-card">
-
-                <h3>
-                    Last Month Report
-                </h3>
-
+                <h3>Last Month Report</h3>
 
                 {% if report_monthly %}
+                    <div class="report-status">• Report available</div>
 
-                    <div class="success">
-                        ● Report available
-                    </div>
-
-
-                    <div class="period">
-
-                        <strong>
-                            Report Period
-                        </strong>
-
-                        <br>
-
-                        {{ report_monthly.period_start }}
-
-                        <br>
-
-                        →
-
-                        <br>
-
-                        {{ report_monthly.period_end }}
-
-                    </div>
-
-
-                    <div class="report-metrics">
-
-                        <div class="metric">
-
-                            <div class="metric-label">
-                                Orders
-                            </div>
-
-                            <div class="metric-value">
-                                {{ report_monthly.order_count }}
-                            </div>
-
+                    {% if report_monthly.period_start and report_monthly.period_end %}
+                        <div class="report-period">
+                            <strong>Report Period</strong><br>
+                            {{ report_monthly.period_start }}<br>
+                            → {{ report_monthly.period_end }}
                         </div>
+                    {% endif %}
 
-
-                        <div class="metric">
-
-                            <div class="metric-label">
-                                Revenue
-                            </div>
-
-                            <div class="metric-value">
-
-                                ${{ "%.2f"|format(
-                                    report_monthly.revenue
-                                ) }}
-
-                            </div>
-
+                    <div class="report-stats">
+                        <div class="report-stat">
+                            Orders
+                            <strong>{{ report_monthly.orders|default(0, true) }}</strong>
                         </div>
-
+                        <div class="report-stat">
+                            Revenue
+                            <strong>${{ "%.2f"|format(report_monthly.revenue|default(0, true)) }}</strong>
+                        </div>
                     </div>
 
-
-                    <p>
-                        <strong>
-                            Report Type:
-                        </strong>
-
-                        {{ report_monthly.type_label }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            Generated:
-                        </strong>
-
-                        {{ report_monthly.generated_at }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            Last Modified:
-                        </strong>
-
-                        {{ report_monthly.last_modified }}
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            File Size:
-                        </strong>
-
-                        {{ report_monthly.size }} bytes
-
-                    </p>
-
-
-                    <p>
-                        <strong>
-                            S3 File:
-                        </strong>
-                    </p>
-
-                    <p class="file-name">
-                        {{ report_monthly.key }}
-                    </p>
-
-
-                    <a
-                        class="button"
-                        href="{{ url_for(
-                            'view_report',
-                            period='monthly'
-                        ) }}"
-                    >
-                        View Monthly Report
-                    </a>
-
-
-                    <a
-                        class="button"
-                        href="{{ url_for(
-                            'download_report',
-                            period='monthly'
-                        ) }}"
-                    >
-                        Download Monthly CSV
-                    </a>
-
-
-                    <div class="report-note">
-
-                        <strong>
-                            Reporting rule:
-                        </strong>
-
-                        This report contains all orders created
-                        during the complete previous calendar month,
-                        from the first day at
-                        <strong>00:00 UTC</strong>
-                        through the first day of the current month
-                        at
-                        <strong>00:00 UTC</strong>.
-
+                    <div class="actions">
+                        <a class="button" href="{{ url_for('view_report', period='monthly') }}">View Monthly Report</a>
+                        <a class="button" href="{{ url_for('download_report', period='monthly') }}">Download Monthly CSV</a>
                     </div>
-
-
                 {% else %}
-
-                    <p class="empty-message">
-
-                        No Last Month report is available yet.
-
-                        The report will still be created even if
-                        there were zero orders.
-
-                    </p>
-
+                    <p class="empty-message">No monthly report is available yet.</p>
                 {% endif %}
-
             </div>
-
         </div>
-
-
-        <div class="report-note">
-
-            <strong>
-                Automatic schedule:
-            </strong>
-
-            EventBridge invokes the Report Lambda daily at
-            <strong>00:00 UTC</strong>.
-
-            <br><br>
-
-            The previous-day report covers the completed
-            calendar day.
-
-            <br>
-
-            The monthly report covers the completed
-            previous calendar month.
-
-        </div>
-
     </section>
-
-
-    <!-- ========================================================= -->
-    <!-- PRODUCT INVENTORY -->
-    <!-- ========================================================= -->
 
     <section id="inventory">
-
-        <h2>
-            Current Product Inventory
-        </h2>
-
-
+        <h2>Current Product Inventory</h2>
         {% if products %}
-
             <div class="table-wrap">
-
                 <table>
-
                     <thead>
-
                         <tr>
-
                             {% for key in products[0].keys() %}
-
-                                <th>
-                                    {{ key }}
-                                </th>
-
+                                <th>{{ key }}</th>
                             {% endfor %}
-
                         </tr>
-
                     </thead>
-
-
                     <tbody>
-
                         {% for row in products %}
-
                             <tr>
-
                                 {% for value in row.values() %}
-
-                                    <td>
-
-                                        {{
-                                            value
-                                            if value is not none
-                                            else ""
-                                        }}
-
-                                    </td>
-
+                                    <td>{{ value if value is not none else "" }}</td>
                                 {% endfor %}
-
                             </tr>
-
                         {% endfor %}
-
                     </tbody>
-
                 </table>
-
             </div>
-
-
         {% else %}
-
-            <p class="empty-message">
-
-                No product records available.
-
-            </p>
-
+            <p class="empty-message">No product records available.</p>
         {% endif %}
-
     </section>
-
-
-    <!-- ========================================================= -->
-    <!-- RECENT ORDERS -->
-    <!-- ========================================================= -->
 
     <section id="orders">
-
-        <h2>
-            Recent Orders
-        </h2>
-
-
+        <h2>Recent Orders</h2>
         {% if orders %}
-
             <div class="table-wrap">
-
                 <table>
-
                     <thead>
-
                         <tr>
-
                             {% for key in orders[0].keys() %}
-
-                                <th>
-                                    {{ key }}
-                                </th>
-
+                                <th>{{ key }}</th>
                             {% endfor %}
-
                         </tr>
-
                     </thead>
-
-
                     <tbody>
-
                         {% for row in orders %}
-
                             <tr>
-
                                 {% for key, value in row.items() %}
-
                                     <td>
-
-                                        {% if key == 'status'
-                                            and value|upper
-                                            in [
-                                                'CANCELLED',
-                                                'CANCELED'
-                                            ] %}
-
-                                            <span
-                                                class="status-cancelled"
-                                            >
-                                                {{ value }}
-                                            </span>
-
+                                        {% if key == 'status' and value == 'CANCELLED' %}
+                                            <span class="status-cancelled">{{ value }}</span>
                                         {% else %}
-
-                                            {{
-                                                value
-                                                if value is not none
-                                                else ""
-                                            }}
-
+                                            {{ value if value is not none else "" }}
                                         {% endif %}
-
                                     </td>
-
                                 {% endfor %}
-
                             </tr>
-
                         {% endfor %}
-
                     </tbody>
-
                 </table>
-
             </div>
-
-
         {% else %}
-
-            <p class="empty-message">
-
-                No order records available.
-
-            </p>
-
+            <p class="empty-message">No order records available.</p>
         {% endif %}
-
     </section>
-
-
-    <!-- ========================================================= -->
-    <!-- CANCELLED ORDERS -->
-    <!-- ========================================================= -->
 
     <section id="cancelled-orders">
+        <h2>Cancelled Orders</h2>
 
-        <h2>
-            Cancelled Orders
-        </h2>
-
-
-        <p class="muted">
-
-            Orders that were successfully cancelled and had
-            their inventory restored.
-
-        </p>
-
-
-        {% set has_cancelled_orders =
-            namespace(value=false)
-        %}
-
+        {% set has_cancelled_orders = namespace(value=false) %}
 
         {% if orders %}
-
             <div class="table-wrap">
-
                 <table>
-
                     <thead>
-
                         <tr>
-
                             {% for key in orders[0].keys() %}
-
-                                <th>
-                                    {{ key }}
-                                </th>
-
+                                <th>{{ key }}</th>
                             {% endfor %}
-
                         </tr>
-
                     </thead>
-
-
                     <tbody>
-
                         {% for row in orders %}
-
-                            {% if row.get('status')|upper
-                                in ['CANCELLED', 'CANCELED'] %}
-
-                                {% set has_cancelled_orders.value =
-                                    true %}
-
+                            {% if row.get('status') == 'CANCELLED' %}
+                                {% set has_cancelled_orders.value = true %}
                                 <tr>
-
                                     {% for key, value in row.items() %}
-
                                         <td>
-
                                             {% if key == 'status' %}
-
-                                                <span
-                                                    class="status-cancelled"
-                                                >
-                                                    {{ value }}
-                                                </span>
-
+                                                <span class="status-cancelled">{{ value }}</span>
                                             {% else %}
-
-                                                {{
-                                                    value
-                                                    if value is not none
-                                                    else ""
-                                                }}
-
+                                                {{ value if value is not none else "" }}
                                             {% endif %}
-
                                         </td>
-
                                     {% endfor %}
-
                                 </tr>
-
                             {% endif %}
-
                         {% endfor %}
-
                     </tbody>
-
                 </table>
-
             </div>
 
-
             {% if not has_cancelled_orders.value %}
-
-                <p class="empty-message">
-
-                    No cancelled orders found.
-
-                </p>
-
+                <p class="empty-message">No cancelled orders found.</p>
             {% endif %}
-
-
         {% else %}
-
-            <p class="empty-message">
-
-                No cancelled orders found.
-
-            </p>
-
+            <p class="empty-message">No cancelled orders found.</p>
         {% endif %}
-
     </section>
-
 </main>
-
 </body>
 </html>
