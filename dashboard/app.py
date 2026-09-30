@@ -487,45 +487,24 @@ def fetch_orders():
 # ============================================================
 
 def list_report_objects(prefix):
-    """
-    List CSV reports under a specific S3 prefix.
-
-    Example prefixes:
-        reports/24hours/
-        reports/monthly/
-    """
+    """List CSV reports under a specific S3 prefix."""
 
     objects = []
 
     try:
-
-        paginator = s3.get_paginator(
-            "list_objects_v2"
-        )
+        paginator = s3.get_paginator("list_objects_v2")
 
         for page in paginator.paginate(
             Bucket=REPORTS_BUCKET,
             Prefix=prefix,
         ):
+            for item in page.get("Contents", []):
+                key = item.get("Key", "")
 
-            for item in page.get(
-                "Contents",
-                [],
-            ):
-
-                key = item.get(
-                    "Key",
-                    "",
-                )
-
-                if key.lower().endswith(
-                    ".csv"
-                ):
-
+                if key.lower().endswith(".csv"):
                     objects.append(item)
 
     except (BotoCoreError, ClientError) as error:
-
         logging.exception(
             "Unable to list reports under %s: %s",
             prefix,
@@ -537,41 +516,87 @@ def list_report_objects(prefix):
     return objects
 
 
+def read_report_rows(key):
+    """Read one CSV report from S3 and return its rows."""
+
+    response = s3.get_object(
+        Bucket=REPORTS_BUCKET,
+        Key=key,
+    )
+
+    raw_csv = response["Body"].read().decode(
+        "utf-8",
+        errors="replace",
+    )
+
+    reader = csv.DictReader(
+        io.StringIO(raw_csv)
+    )
+
+    return list(reader)
+
+
+def calculate_report_summary(rows):
+    """
+    Calculate unique order count and revenue.
+
+    The CSV can contain multiple rows for one order when an order
+    contains multiple products. Therefore total_amount is counted
+    only once per order_id.
+    """
+
+    orders = {}
+
+    for row in rows:
+        order_id = str(row.get("order_id", "")).strip()
+
+        if not order_id:
+            continue
+
+        if order_id not in orders:
+            try:
+                amount = float(row.get("total_amount") or 0)
+            except (TypeError, ValueError):
+                amount = 0.0
+
+            orders[order_id] = amount
+
+    return {
+        "order_count": len(orders),
+        "revenue": sum(orders.values()),
+    }
+
+
 def build_report_info(period):
     """
-    Return the newest S3 report for the requested period.
+    Return the newest report for the requested period.
 
     period:
-        24h
-        monthly
+        24h      -> previous calendar day
+        monthly  -> previous calendar month
     """
 
     if period == "24h":
-
-        prefix = (
-            f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
-        )
-
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
         title = "Previous Day"
+        window_text = (
+            "Previous day 12:00 AM UTC to today 12:00 AM UTC."
+        )
 
     elif period == "monthly":
-
-        prefix = (
-            f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+        title = "Last Month"
+        window_text = (
+            "First day of the previous month 12:00 AM UTC "
+            "to first day of the current month 12:00 AM UTC."
         )
 
-        title = "Last Month"
-
     else:
-
         return None
 
-    objects = list_report_objects(
-        prefix
-    )
+    objects = list_report_objects(prefix)
 
     if not objects:
-
         return None
 
     newest = max(
@@ -580,6 +605,20 @@ def build_report_info(period):
     )
 
     key = newest["Key"]
+
+    try:
+        rows = read_report_rows(key)
+        summary = calculate_report_summary(rows)
+    except (BotoCoreError, ClientError, OSError, UnicodeError) as error:
+        logging.exception(
+            "Unable to calculate report summary for %s: %s",
+            key,
+            error,
+        )
+        summary = {
+            "order_count": 0,
+            "revenue": 0.0,
+        }
 
     url = s3.generate_presigned_url(
         "get_object",
@@ -598,18 +637,20 @@ def build_report_info(period):
         "last_modified": (
             newest["LastModified"]
             .astimezone(timezone.utc)
-            .strftime(
-                "%Y-%m-%d %H:%M:%S UTC"
-            )
+            .strftime("%Y-%m-%d %H:%M:%S UTC")
         ),
         "url": url,
+        "window_text": window_text,
+        "order_count": summary["order_count"],
+        "revenue": summary["revenue"],
+        "revenue_display": f"${summary['revenue']:,.2f}",
     }
 
 
 def latest_report():
     """
-    The dashboard's Latest Report card uses the newest
-    Previous Day report when one exists.
+    The dashboard's Previous Day Report card uses the newest
+    previous-calendar-day report when one exists.
     """
 
     return build_report_info(
@@ -753,6 +794,11 @@ def view_report(period):
     )
 
     rows = list(reader)
+    summary = calculate_report_summary(rows)
+
+    report["order_count"] = summary["order_count"]
+    report["revenue"] = summary["revenue"]
+    report["revenue_display"] = f"${summary['revenue']:,.2f}"
 
     return render_template_string(
         """
