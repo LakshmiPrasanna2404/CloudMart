@@ -94,3 +94,13 @@ Outputs:
     Value: !Ref ReportGenerateFunction
     Export:
       Name: !Sub cloudmart-${Environment}-report-generate-function-name
+
+  ReportScheduleRuleArn:
+    Description: ARN of the daily EventBridge report schedule
+    Value: !GetAtt ReportScheduleRule.Arn
+    Export:
+      Name: !Sub cloudmart-${Environment}-report-schedule-rule-arn
+
+  ReportScheduleExpression:
+    Description: Schedule used to generate the reports
+    Value: !Ref ScheduleExpression
