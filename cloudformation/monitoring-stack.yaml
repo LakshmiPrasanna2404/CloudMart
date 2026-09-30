@@ -17,7 +17,8 @@ Parameters:
 
   DBInstanceIdentifier:
     Type: String
-    Default: cloudmart-prod-db
+    Default: ""
+    Description: Optional RDS DB instance identifier. If empty, uses cloudmart-<Environment>-db.
 
   LambdaErrorThreshold:
     Type: Number
@@ -33,6 +34,12 @@ Conditions:
     !Not
       - !Equals
         - !Ref AlertEmail
+        - ""
+
+  HasDBInstanceIdentifier:
+    !Not
+      - !Equals
+        - !Ref DBInstanceIdentifier
         - ""
 
 Resources:
@@ -160,7 +167,10 @@ Resources:
       TreatMissingData: notBreaching
       Dimensions:
         - Name: DBInstanceIdentifier
-          Value: !Ref DBInstanceIdentifier
+          Value: !If
+            - HasDBInstanceIdentifier
+            - !Ref DBInstanceIdentifier
+            - !Sub cloudmart-${Environment}-db
       AlarmActions:
         - !Ref MonitoringTopic
 
@@ -179,7 +189,10 @@ Resources:
       TreatMissingData: notBreaching
       Dimensions:
         - Name: DBInstanceIdentifier
-          Value: !Ref DBInstanceIdentifier
+          Value: !If
+            - HasDBInstanceIdentifier
+            - !Ref DBInstanceIdentifier
+            - !Sub cloudmart-${Environment}-db
       AlarmActions:
         - !Ref MonitoringTopic
 
