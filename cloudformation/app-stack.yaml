@@ -487,8 +487,6 @@ Outputs:
   DashboardInstanceId:
     Description: CloudFormation-created EC2 instance hosting the Flask dashboard
     Value: !Ref DashboardInstanceV2
-    Export:
-      Name: !Sub cloudmart-${Environment}-dashboard-instance-id
 
   DashboardPublicIp:
     Description: Public IPv4 address of the CloudMart dashboard EC2 instance
