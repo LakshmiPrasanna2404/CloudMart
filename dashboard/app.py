@@ -109,14 +109,16 @@ SESSION_TIMEOUT_MINUTES = int(
 # FLASK SESSION SECRET
 # ============================================================
 #
-# The Flask secret key is persisted on the EC2 instance so browser
-# sessions remain valid across dashboard process restarts.
+# The Flask secret key must be identical for all Gunicorn
+# workers. Otherwise, one worker may not be able to validate
+# a session created by another worker.
 #
 # If FLASK_SECRET_KEY is supplied through the environment,
 # use it.
 #
 # If it is not supplied, create one once and persist it on
-# the EC2 instance so future application restarts use the same key.
+# the EC2 instance so that all workers and future application
+# restarts use the same key.
 # ============================================================
 
 FLASK_SECRET_KEY = os.getenv(
@@ -173,7 +175,7 @@ if not FLASK_SECRET_KEY:
 
             except FileExistsError:
 
-                # Another dashboard process may have created
+                # Another Gunicorn worker may have created
                 # the file at the same time. Read that
                 # already-created value instead.
                 with open(
@@ -485,185 +487,207 @@ def fetch_orders():
 # ============================================================
 
 def list_report_objects(prefix):
-    """
-    List CSV reports under a specific S3 prefix.
-
-    Example prefixes:
-        reports/24hours/
-        reports/monthly/
-    """
-
-    objects = []
-
-    try:
-
-        paginator = s3.get_paginator(
-            "list_objects_v2"
-        )
-
-        for page in paginator.paginate(
-            Bucket=REPORTS_BUCKET,
-            Prefix=prefix,
-        ):
-
-            for item in page.get(
-                "Contents",
-                [],
-            ):
-
-                key = item.get(
-                    "Key",
-                    "",
-                )
-
-                if key.lower().endswith(
-                    ".csv"
-                ):
-
-                    objects.append(item)
-
-    except (BotoCoreError, ClientError) as error:
-
-        logging.exception(
-            "Unable to list reports under %s: %s",
-            prefix,
-            error,
-        )
-
-        return []
-
-    return objects
-
-
-def get_report_period_label(period):
-    if period == "24h":
-        return "Previous Day"
-    if period == "monthly":
-        return "Last Month"
-    return "Report"
-
-
-def list_report_objects(prefix):
     """List CSV reports under a specific S3 prefix."""
+
     objects = []
+
     try:
         paginator = s3.get_paginator("list_objects_v2")
+
         for page in paginator.paginate(
             Bucket=REPORTS_BUCKET,
             Prefix=prefix,
         ):
             for item in page.get("Contents", []):
                 key = item.get("Key", "")
+
                 if key.lower().endswith(".csv"):
                     objects.append(item)
+
     except (BotoCoreError, ClientError) as error:
         logging.exception(
             "Unable to list reports under %s: %s",
             prefix,
             error,
         )
+
         return []
+
     return objects
 
 
-def get_report_stats(report):
-    """Read a report CSV and calculate unique orders and revenue."""
-    try:
-        response = s3.get_object(
-            Bucket=REPORTS_BUCKET,
-            Key=report["key"],
-        )
-        raw_csv = response["Body"].read().decode(
-            "utf-8",
-            errors="replace",
-        )
+def read_report_rows(key):
+    """Read one CSV report from S3 and return its rows."""
 
-        reader = csv.DictReader(io.StringIO(raw_csv))
-        order_totals = {}
+    response = s3.get_object(
+        Bucket=REPORTS_BUCKET,
+        Key=key,
+    )
 
-        for row in reader:
-            order_id = row.get("order_id")
-            if not order_id:
-                continue
+    raw_csv = response["Body"].read().decode(
+        "utf-8",
+        errors="replace",
+    )
 
-            if order_id not in order_totals:
-                try:
-                    order_totals[order_id] = float(
-                        row.get("total_amount") or 0
-                    )
-                except (TypeError, ValueError):
-                    order_totals[order_id] = 0.0
+    reader = csv.DictReader(
+        io.StringIO(raw_csv)
+    )
 
-        return {
-            "order_count": len(order_totals),
-            "revenue": round(sum(order_totals.values()), 2),
-        }
-    except (BotoCoreError, ClientError, UnicodeError) as error:
-        logging.exception(
-            "Unable to calculate report statistics for %s: %s",
-            report.get("key"),
-            error,
-        )
-        return {
-            "order_count": 0,
-            "revenue": 0.0,
-        }
+    return list(reader)
+
+
+def calculate_report_summary(rows):
+    """
+    Calculate unique order count and revenue.
+
+    The CSV can contain multiple rows for one order when an order
+    contains multiple products. Therefore total_amount is counted
+    only once per order_id.
+    """
+
+    orders = {}
+
+    for row in rows:
+        order_id = str(row.get("order_id", "")).strip()
+
+        if not order_id:
+            continue
+
+        if order_id not in orders:
+            try:
+                amount = float(row.get("total_amount") or 0)
+            except (TypeError, ValueError):
+                amount = 0.0
+
+            orders[order_id] = amount
+
+    return {
+        "order_count": len(orders),
+        "revenue": sum(orders.values()),
+    }
 
 
 def build_report_info(period):
-    """Return the newest report for Previous Day or Last Month."""
+    """
+    Return the newest report for the requested period.
+
+    period:
+        24h      -> previous calendar day
+        monthly  -> previous calendar month
+    """
+
     if period == "24h":
         prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
         title = "Previous Day"
-        window = "Previous day 12:00 AM UTC to today 12:00 AM UTC."
+        window_text = (
+            "Previous day 12:00 AM UTC to today 12:00 AM UTC."
+        )
+
     elif period == "monthly":
         prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
         title = "Last Month"
-        window = "First day of the previous month 12:00 AM UTC to first day of the current month 12:00 AM UTC."
+        window_text = (
+            "First day of the previous month 12:00 AM UTC "
+            "to first day of the current month 12:00 AM UTC."
+        )
+
     else:
         return None
 
     objects = list_report_objects(prefix)
+
     if not objects:
         return None
 
-    newest = max(objects, key=lambda item: item["LastModified"])
-    report = {
+    newest = max(
+        objects,
+        key=lambda item: item["LastModified"],
+    )
+
+    key = newest["Key"]
+
+    try:
+        rows = read_report_rows(key)
+        summary = calculate_report_summary(rows)
+    except (BotoCoreError, ClientError, OSError, UnicodeError) as error:
+        logging.exception(
+            "Unable to calculate report summary for %s: %s",
+            key,
+            error,
+        )
+        summary = {
+            "order_count": 0,
+            "revenue": 0.0,
+        }
+
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": REPORTS_BUCKET,
+            "Key": key,
+        },
+        ExpiresIn=900,
+    )
+
+    return {
         "period": period,
         "title": title,
-        "window": window,
-        "key": newest["Key"],
+        "key": key,
         "size": newest["Size"],
-        "last_modified": newest["LastModified"].astimezone(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
+        "last_modified": (
+            newest["LastModified"]
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%d %H:%M:%S UTC")
         ),
+        "url": url,
+        "window_text": window_text,
+        "order_count": summary["order_count"],
+        "revenue": summary["revenue"],
+        "revenue_display": f"${summary['revenue']:,.2f}",
     }
-
-    report.update(get_report_stats(report))
-    return report
 
 
 def latest_report():
-    return build_report_info("24h")
+    """
+    The dashboard's Previous Day Report card uses the newest
+    previous-calendar-day report when one exists.
+    """
+
+    return build_report_info(
+        "24h"
+    )
 
 
 def get_report_object(period):
-    report = build_report_info(period)
+    """
+    Return the newest report object for a period.
+    """
+
+    report = build_report_info(
+        period
+    )
+
     if not report:
+
         return None
 
     try:
+
         response = s3.get_object(
             Bucket=REPORTS_BUCKET,
             Key=report["key"],
         )
+
         return report, response
+
     except (BotoCoreError, ClientError) as error:
+
         logging.exception(
             "Unable to read report %s from S3: %s",
             period,
             error,
         )
+
         return None
 
 
@@ -748,9 +772,9 @@ def view_report(period):
                 </html>
                 """,
                 title=(
-                    "Last 24 Hours"
+                    "Previous Day"
                     if period == "24h"
-                    else "Monthly"
+                    else "Last Month"
                 ),
             ),
             404,
@@ -770,6 +794,11 @@ def view_report(period):
     )
 
     rows = list(reader)
+    summary = calculate_report_summary(rows)
+
+    report["order_count"] = summary["order_count"]
+    report["revenue"] = summary["revenue"]
+    report["revenue_display"] = f"${summary['revenue']:,.2f}"
 
     return render_template_string(
         """
@@ -887,15 +916,7 @@ def view_report(period):
                         Orders in report:
                     </strong>
 
-                    {{ report.order_count }}
-                </p>
-
-                <p>
-                    <strong>
-                        Revenue:
-                    </strong>
-
-                    ${{ "%.2f"|format(report.revenue) }}
+                    {{ rows|length }}
                 </p>
 
                 <div class="actions">
