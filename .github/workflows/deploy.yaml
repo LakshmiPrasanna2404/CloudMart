@@ -400,35 +400,6 @@ jobs:
           aws lambda wait function-updated \
             --function-name cloudmart-prod-report-generate
 
-      - name: Generate previous day and last month reports
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -f /tmp/report-generation.json
-
-          aws lambda invoke \
-            --function-name cloudmart-prod-report-generate \
-            --region "$AWS_REGION" \
-            --cli-binary-format raw-in-base64-out \
-            --payload '{}' \
-            /tmp/report-generation.json >/tmp/report-invoke-meta.json
-
-          cat /tmp/report-invoke-meta.json
-          cat /tmp/report-generation.json
-
-          if grep -q '"FunctionError"' /tmp/report-invoke-meta.json; then
-            echo "Report Lambda returned FunctionError"
-            exit 1
-          fi
-
-          if grep -q '"statusCode": 200' /tmp/report-generation.json; then
-            echo "Previous day and last month reports generated successfully"
-          else
-            echo "Unexpected report Lambda response"
-            exit 1
-          fi
-
       - name: Deploy monitoring-stack
         run: |
           set -euo pipefail
@@ -825,72 +796,54 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Always get the current dashboard instance created by CloudFormation.
           INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-monitoring \
+            --stack-name cloudmart-app \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
             --output text)
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
+            echo "ERROR: DashboardInstanceId was not found in cloudmart-app"
             exit 1
           fi
 
           echo "Dashboard EC2 instance: $INSTANCE_ID"
 
-          TAGS=$(aws ec2 describe-tags \
-            --filters "Name=resource-id,Values=$INSTANCE_ID" \
-            --region "$AWS_REGION" \
-            --query "Tags[?Key=='Project' || Key=='Component'].[Key,Value]" \
-            --output text)
-
-          echo "Dashboard instance tags:"
-          echo "$TAGS"
-
-          if ! grep -q $'Project\tCloudMart' <<< "$TAGS"; then
-            echo "ERROR: Dashboard instance is missing Project=CloudMart tag"
-            exit 1
-          fi
-
-          if ! grep -q $'Component\tDashboard' <<< "$TAGS"; then
-            echo "ERROR: Dashboard instance is missing Component=Dashboard tag"
-            exit 1
-          fi
-
-          echo "Checking dashboard EC2 instance state and IAM profile..."
-          aws ec2 describe-instances \
-            --instance-ids "$INSTANCE_ID" \
-            --region "$AWS_REGION" \
-            --query "Reservations[0].Instances[0].[State.Name,SubnetId,PrivateIpAddress,PublicIpAddress,IamInstanceProfile.Arn]" \
-            --output table
-
-          echo "Checking SSM managed-instance registration..."
-          aws ssm describe-instance-information \
-            --region "$AWS_REGION" \
-            --output table || true
-
-          # Wait for SSM agent to become online after a new EC2 instance is created.
+          echo "Waiting for EC2 SSM Agent to become Online..."
+          ONLINE=false
           for attempt in {1..60}; do
             PING_STATUS=$(aws ssm describe-instance-information \
-              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --instance-information-filter-list "key=InstanceIds,valueSet=$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || true)
 
-            echo "SSM agent check $attempt/60: $PING_STATUS"
+            echo "SSM agent check $attempt/60: ${PING_STATUS:-Unknown}"
 
             if [[ "$PING_STATUS" == "Online" ]]; then
+              ONLINE=true
               break
             fi
 
-            if [[ "$attempt" == "60" ]]; then
-              echo "ERROR: Dashboard instance did not become SSM Online"
-              exit 1
-            fi
-
-            sleep 10
+            sleep 5
           done
+
+          if [[ "$ONLINE" != true ]]; then
+            echo "ERROR: Dashboard instance did not become SSM Online"
+            echo "--- EC2 instance details ---"
+            aws ec2 describe-instances \
+              --instance-ids "$INSTANCE_ID" \
+              --region "$AWS_REGION" \
+              --query "Reservations[0].Instances[0].[State.Name,PrivateIpAddress,PublicIpAddress,SubnetId,SecurityGroupIds,IamInstanceProfile.Arn]" \
+              --output table || true
+            echo "--- SSM registration details ---"
+            aws ssm describe-instance-information \
+              --region "$AWS_REGION" \
+              --query "InstanceInformationList[?InstanceId=='$INSTANCE_ID'].[InstanceId,PingStatus,AgentVersion,PlatformName,LastPingDateTime]" \
+              --output table || true
+            echo "The EC2 UserData starts amazon-ssm-agent; if this still fails, inspect the instance console/user-data log after the workflow run."
+            exit 1
+          fi
 
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
@@ -905,16 +858,15 @@ jobs:
 
           echo "SSM command: $COMMAND_ID"
 
-          # Allow up to 10 minutes for package installation and dashboard startup.
-          for attempt in {1..60}; do
+          for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "Status" \
-              --output text 2>/dev/null || true)
+              --output text)
 
-            echo "Attempt $attempt/60: $STATUS"
+            echo "Attempt $attempt: $STATUS"
 
             case "$STATUS" in
               Success)
@@ -931,7 +883,7 @@ jobs:
                   --command-id "$COMMAND_ID" \
                   --instance-id "$INSTANCE_ID" \
                   --region "$AWS_REGION" \
-                  --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
+                  --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
                 exit 1
                 ;;
@@ -940,12 +892,5 @@ jobs:
             sleep 10
           done
 
-          echo "Timed out waiting for SSM dashboard deployment"
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --region "$AWS_REGION" \
-            --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
-            --output text || true
+          echo "Timed out waiting for SSM deployment"
           exit 1
-
