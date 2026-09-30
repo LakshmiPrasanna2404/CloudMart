@@ -1,7 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
+
 Description: CloudMart report-generation Lambda
 
 Parameters:
+
   Environment:
     Type: String
     Default: prod
@@ -23,11 +25,13 @@ Parameters:
 
   DBUsernameParameter:
     Type: String
-    Default: /cloudmart/prod/db/username
+    Default: ""
+    Description: Optional SSM parameter name for the database username. If empty, uses /cloudmart/<Environment>/db/username.
 
   DBPasswordParameter:
     Type: String
-    Default: /cloudmart/prod/db/password
+    Default: ""
+    Description: Optional SSM parameter name for the database password. If empty, uses /cloudmart/<Environment>/db/password.
 
   ArtifactBucketName:
     Type: String
@@ -41,7 +45,22 @@ Parameters:
     Type: String
     Default: cron(0 0 * * ? *)
 
+Conditions:
+
+  HasDBUsernameParameter:
+    !Not
+      - !Equals
+        - !Ref DBUsernameParameter
+        - ""
+
+  HasDBPasswordParameter:
+    !Not
+      - !Equals
+        - !Ref DBPasswordParameter
+        - ""
+
 Resources:
+
   ReportGenerateFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -68,8 +87,16 @@ Resources:
           REPORTS_BUCKET: !Ref ReportsBucketName
           DB_HOST: !Ref DBHost
           DB_NAME: cloudmart
-          DB_USERNAME_PARAMETER: !Ref DBUsernameParameter
-          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameter
+
+          DB_USERNAME_PARAMETER: !If
+            - HasDBUsernameParameter
+            - !Ref DBUsernameParameter
+            - !Sub /cloudmart/${Environment}/db/username
+
+          DB_PASSWORD_PARAMETER: !If
+            - HasDBPasswordParameter
+            - !Ref DBPasswordParameter
+            - !Sub /cloudmart/${Environment}/db/password
 
   ReportScheduleRule:
     Type: AWS::Events::Rule
@@ -90,6 +117,7 @@ Resources:
       SourceArn: !GetAtt ReportScheduleRule.Arn
 
 Outputs:
+
   ReportGenerateFunctionName:
     Value: !Ref ReportGenerateFunction
     Export:
