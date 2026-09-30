@@ -1258,6 +1258,16 @@ def dashboard():
         }
     ]
 
+    # Build the report objects once so the report cards and the
+    # top Previous Day Revenue card use the exact same values.
+    report_24h = build_report_info(
+        "24h"
+    )
+
+    report_monthly = build_report_info(
+        "monthly"
+    )
+
     return render_template(
         "index.html",
         products=products,
@@ -1266,12 +1276,13 @@ def dashboard():
         cloudwatch_dashboard_url=(
             CLOUDWATCH_DASHBOARD_URL
         ),
-        report=latest_report(),
-        report_24h=build_report_info(
-            "24h"
-        ),
-        report_monthly=build_report_info(
-            "monthly"
+        report=report_24h,
+        report_24h=report_24h,
+        report_monthly=report_monthly,
+        previous_day_revenue=(
+            report_24h["revenue"]
+            if report_24h
+            else 0.0
         ),
         errors=errors,
         generated_at=(
