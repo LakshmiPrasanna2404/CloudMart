@@ -109,8 +109,8 @@ SESSION_TIMEOUT_MINUTES = int(
 # FLASK SESSION SECRET
 # ============================================================
 #
-# The Flask secret key must remain stable across application
-# restarts so existing dashboard sessions remain valid.
+# The Flask secret key is persisted on the EC2 instance so browser
+# sessions remain valid across dashboard process restarts.
 #
 # If FLASK_SECRET_KEY is supplied through the environment,
 # use it.
@@ -173,7 +173,7 @@ if not FLASK_SECRET_KEY:
 
             except FileExistsError:
 
-                # Another Gunicorn worker may have created
+                # Another dashboard process may have created
                 # the file at the same time. Read that
                 # already-created value instead.
                 with open(
@@ -535,161 +535,135 @@ def list_report_objects(prefix):
     return objects
 
 
-def build_report_info(period):
-    """
-    Return the newest S3 report for the requested period.
-
-    period:
-        24h      -> Previous calendar day
-        monthly  -> Previous calendar month
-
-    The report Lambda always writes a report even when there are
-    zero orders.  For newly generated reports, order count and
-    revenue are read from S3 object metadata.  Older reports that
-    do not contain that metadata are handled by reading the CSV.
-    """
-
+def get_report_period_label(period):
     if period == "24h":
-        prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
-        title = "Previous Day Report"
-        description = "Previous day 12:00 AM UTC to today 12:00 AM UTC."
-    elif period == "monthly":
-        prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
-        title = "Last Month Report"
-        description = (
-            "First day of the previous month 12:00 AM UTC "
-            "to first day of the current month 12:00 AM UTC."
-        )
-    else:
-        return None
+        return "Previous Day"
+    if period == "monthly":
+        return "Last Month"
+    return "Report"
 
-    objects = list_report_objects(prefix)
 
-    if not objects:
-        return None
-
-    newest = max(objects, key=lambda item: item["LastModified"])
-    key = newest["Key"]
-
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={
-            "Bucket": REPORTS_BUCKET,
-            "Key": key,
-        },
-        ExpiresIn=900,
-    )
-
-    orders_count = 0
-    revenue = 0.0
-
+def list_report_objects(prefix):
+    """List CSV reports under a specific S3 prefix."""
+    objects = []
     try:
-        head = s3.head_object(
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(
             Bucket=REPORTS_BUCKET,
-            Key=key,
-        )
-
-        metadata = {
-            str(k).lower(): v
-            for k, v in head.get("Metadata", {}).items()
-        }
-
-        if "unique-order-count" in metadata:
-            orders_count = int(metadata["unique-order-count"])
-        if "total-revenue" in metadata:
-            revenue = float(metadata["total-revenue"])
-
-        # Fall back to CSV parsing for older reports without the
-        # new metadata fields.
-        if "unique-order-count" not in metadata or "total-revenue" not in metadata:
-            response = s3.get_object(
-                Bucket=REPORTS_BUCKET,
-                Key=key,
-            )
-            csv_text = response["Body"].read().decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(csv_text))
-
-            order_totals = {}
-            for row in reader:
-                order_id = str(row.get("order_id") or "").strip()
-                if not order_id:
-                    continue
-                if order_id not in order_totals:
-                    try:
-                        order_totals[order_id] = float(
-                            row.get("total_amount") or 0
-                        )
-                    except (TypeError, ValueError):
-                        order_totals[order_id] = 0.0
-
-            orders_count = len(order_totals)
-            revenue = sum(order_totals.values())
-
-    except (BotoCoreError, ClientError, ValueError, TypeError) as error:
+            Prefix=prefix,
+        ):
+            for item in page.get("Contents", []):
+                key = item.get("Key", "")
+                if key.lower().endswith(".csv"):
+                    objects.append(item)
+    except (BotoCoreError, ClientError) as error:
         logging.exception(
-            "Unable to calculate report summary for %s: %s",
-            key,
+            "Unable to list reports under %s: %s",
+            prefix,
             error,
         )
-
-    return {
-        "period": period,
-        "title": title,
-        "description": description,
-        "key": key,
-        "size": newest["Size"],
-        "last_modified": (
-            newest["LastModified"]
-            .astimezone(timezone.utc)
-            .strftime("%Y-%m-%d %H:%M:%S UTC")
-        ),
-        "url": url,
-        "orders_count": orders_count,
-        "revenue": revenue,
-        "revenue_display": f"${revenue:,.2f}",
-    }
-
-def latest_report():
-    """
-    The dashboard's Latest Report card uses the newest
-    Last-24-Hours report when one exists.
-    """
-
-    return build_report_info(
-        "24h"
-    )
+        return []
+    return objects
 
 
-def get_report_object(period):
-    """
-    Return the newest report object for a period.
-    """
-
-    report = build_report_info(
-        period
-    )
-
-    if not report:
-
-        return None
-
+def get_report_stats(report):
+    """Read a report CSV and calculate unique orders and revenue."""
     try:
-
         response = s3.get_object(
             Bucket=REPORTS_BUCKET,
             Key=report["key"],
         )
+        raw_csv = response["Body"].read().decode(
+            "utf-8",
+            errors="replace",
+        )
 
+        reader = csv.DictReader(io.StringIO(raw_csv))
+        order_totals = {}
+
+        for row in reader:
+            order_id = row.get("order_id")
+            if not order_id:
+                continue
+
+            if order_id not in order_totals:
+                try:
+                    order_totals[order_id] = float(
+                        row.get("total_amount") or 0
+                    )
+                except (TypeError, ValueError):
+                    order_totals[order_id] = 0.0
+
+        return {
+            "order_count": len(order_totals),
+            "revenue": round(sum(order_totals.values()), 2),
+        }
+    except (BotoCoreError, ClientError, UnicodeError) as error:
+        logging.exception(
+            "Unable to calculate report statistics for %s: %s",
+            report.get("key"),
+            error,
+        )
+        return {
+            "order_count": 0,
+            "revenue": 0.0,
+        }
+
+
+def build_report_info(period):
+    """Return the newest report for Previous Day or Last Month."""
+    if period == "24h":
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/24hours/"
+        title = "Previous Day"
+        window = "Previous day 12:00 AM UTC to today 12:00 AM UTC."
+    elif period == "monthly":
+        prefix = f"{REPORTS_PREFIX.rstrip('/')}/monthly/"
+        title = "Last Month"
+        window = "First day of the previous month 12:00 AM UTC to first day of the current month 12:00 AM UTC."
+    else:
+        return None
+
+    objects = list_report_objects(prefix)
+    if not objects:
+        return None
+
+    newest = max(objects, key=lambda item: item["LastModified"])
+    report = {
+        "period": period,
+        "title": title,
+        "window": window,
+        "key": newest["Key"],
+        "size": newest["Size"],
+        "last_modified": newest["LastModified"].astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
+    }
+
+    report.update(get_report_stats(report))
+    return report
+
+
+def latest_report():
+    return build_report_info("24h")
+
+
+def get_report_object(period):
+    report = build_report_info(period)
+    if not report:
+        return None
+
+    try:
+        response = s3.get_object(
+            Bucket=REPORTS_BUCKET,
+            Key=report["key"],
+        )
         return report, response
-
     except (BotoCoreError, ClientError) as error:
-
         logging.exception(
             "Unable to read report %s from S3: %s",
             period,
             error,
         )
-
         return None
 
 
@@ -913,7 +887,15 @@ def view_report(period):
                         Orders in report:
                     </strong>
 
-                    {{ rows|length }}
+                    {{ report.order_count }}
+                </p>
+
+                <p>
+                    <strong>
+                        Revenue:
+                    </strong>
+
+                    ${{ "%.2f"|format(report.revenue) }}
                 </p>
 
                 <div class="actions">
@@ -1046,7 +1028,7 @@ def download_report(period):
     ].read()
 
     filename = (
-        "cloudmart-last-24-hours-report.csv"
+        "cloudmart-previous-day-report.csv"
         if period == "24h"
         else "cloudmart-last-month-report.csv"
     )
