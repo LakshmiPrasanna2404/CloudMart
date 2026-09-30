@@ -685,12 +685,9 @@ jobs:
           test -f dashboard/requirements.txt
           test -f dashboard/templates/index.html
 
-          rm -rf dashboard/vendor
-          python -m pip install -r dashboard/requirements.txt -t dashboard/vendor --quiet
-
           rm -f dashboard.zip
           cd dashboard
-          zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*'
+          zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*' 'vendor/*'
           cd ..
 
       - name: Upload dashboard package
@@ -732,9 +729,15 @@ jobs:
           rm -rf "${APP_DIR:?}"/*
           unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
 
-          # Use the dependencies already included in the dashboard package.
           test -f "$APP_DIR/app.py"
-          test -d "$APP_DIR/vendor"
+          test -f "$APP_DIR/requirements.txt"
+
+          # Install dependencies on the EC2 instance using the same
+          # Python runtime that will execute the dashboard. This avoids
+          # copying packages built for a different Python version.
+          python3 -m venv "$APP_DIR/venv"
+          "$APP_DIR/venv/bin/python" -m pip install --upgrade pip
+          "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 
           DB_USER=$(aws ssm get-parameter \
             --name "/cloudmart/prod/db/username" \
@@ -773,8 +776,7 @@ jobs:
           User=root
           WorkingDirectory=$APP_DIR
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          Environment="PYTHONPATH=$APP_DIR/vendor"
-          ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --bind 0.0.0.0:80 app:app
+          ExecStart=$APP_DIR/venv/bin/python $APP_DIR/app.py
           Restart=always
           RestartSec=5
 
@@ -815,10 +817,46 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Always get the current dashboard instance from CloudFormation.
+          # Never use a hardcoded EC2 instance ID because CloudFormation may
+          # replace the instance during a stack update or clean redeploy.
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-monitoring \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
+            --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
+            exit 1
+          fi
+
+          echo "Dashboard EC2 instance from CloudFormation: $INSTANCE_ID"
+
+          # Verify the instance is the CloudMart dashboard before sending SSM.
+          PROJECT_TAG=$(aws ec2 describe-tags \
+            --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Project" \
+            --region "$AWS_REGION" \
+            --query "Tags[0].Value" \
+            --output text)
+
+          COMPONENT_TAG=$(aws ec2 describe-tags \
+            --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Component" \
+            --region "$AWS_REGION" \
+            --query "Tags[0].Value" \
+            --output text)
+
+          if [ "$PROJECT_TAG" != "CloudMart" ] || [ "$COMPONENT_TAG" != "Dashboard" ]; then
+            echo "ERROR: CloudFormation returned an EC2 instance that is not the CloudMart Dashboard"
+            echo "Project tag: $PROJECT_TAG"
+            echo "Component tag: $COMPONENT_TAG"
+            exit 1
+          fi
+
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids i-0e17d466382559abd \
+            --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
             --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
@@ -831,7 +869,7 @@ jobs:
           for attempt in {1..30}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
-              --instance-id i-0e17d466382559abd \
+              --instance-id "$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "Status" \
               --output text)
@@ -842,7 +880,7 @@ jobs:
               Success)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-0e17d466382559abd \
+                  --instance-id "$INSTANCE_ID" \
                   --region "$AWS_REGION" \
                   --query "StandardOutputContent" \
                   --output text
@@ -851,7 +889,7 @@ jobs:
               Failed|Cancelled|TimedOut|Cancelling)
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-0e17d466382559abd \
+                  --instance-id "$INSTANCE_ID" \
                   --region "$AWS_REGION" \
                   --query "[StandardOutputContent,StandardErrorContent]" \
                   --output text
