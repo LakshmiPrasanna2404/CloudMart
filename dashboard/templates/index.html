@@ -266,11 +266,11 @@
         <div class="card">
 
             <div>
-                Previous Day Report
+                Latest Report
             </div>
 
             <div class="number">
-                {{ "Available" if report_24h else "None" }}
+                {{ "Available" if report else "None" }}
             </div>
 
         </div>
@@ -284,136 +284,143 @@
 
     <section id="reports">
 
-        <h2>Reports</h2>
+        <h2>
+            Reports
+        </h2>
 
         <p class="muted">
             Reports are generated automatically and stored securely in S3.
-            Each report covers a fixed calendar period and includes order and revenue totals.
+            Revenue is included inside every CSV report.
         </p>
 
+
         <!-- Previous Day Report -->
-        <h3>Previous Day Report</h3>
 
-        {% if report_24h %}
+    <h3>
+        Previous Day Report
+    </h3>
 
-            <p class="muted">
-                {{ report_24h.description }}
-            </p>
+    {% if report_24h %}
 
-            <p>
-                <strong>Status:</strong> Report available
-            </p>
+        <p class="muted">
+            {{ report_24h.window }}
+        </p>
 
-            <div class="cards" style="margin: 12px 0 18px 0;">
+        <p>
+            <strong>Status:</strong>
+            Report available
+        </p>
 
-                <div class="card">
-                    <div>Orders</div>
-                    <div class="number">{{ report_24h.orders_count }}</div>
-                </div>
+        <div class="cards" style="margin: 12px 0;">
 
-                <div class="card">
-                    <div>Revenue</div>
-                    <div class="number">{{ report_24h.revenue_display }}</div>
-                </div>
-
+            <div class="card" style="margin-bottom: 0;">
+                <div>Orders</div>
+                <div class="number">{{ report_24h.order_count }}</div>
             </div>
 
-            <p>
-                <strong>File:</strong>
-                {{ report_24h.key }}
-            </p>
-
-            <p>
-                <strong>Last Modified:</strong>
-                {{ report_24h.last_modified }}
-            </p>
-
-            <p>
-                <strong>Size:</strong>
-                {{ report_24h.size }} bytes
-            </p>
-
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <a class="button" href="{{ url_for('view_report', period='24h') }}">
-                    View Report
-                </a>
-
-                <a class="button" href="{{ url_for('download_report', period='24h') }}">
-                    Download CSV
-                </a>
+            <div class="card" style="margin-bottom: 0;">
+                <div>Revenue</div>
+                <div class="number">${{ "%.2f"|format(report_24h.revenue) }}</div>
             </div>
 
-        {% else %}
+        </div>
 
-            <p class="empty-message">
-                No Previous Day report is available yet.
-            </p>
+        <p>
+            <strong>File:</strong>
+            {{ report_24h.key }}
+        </p>
 
-        {% endif %}
+        <p>
+            <strong>Last Modified:</strong>
+            {{ report_24h.last_modified }}
+        </p>
+
+        <p>
+            <strong>Size:</strong>
+            {{ report_24h.size }} bytes
+        </p>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <a class="button" href="{{ url_for('view_report', period='24h') }}">
+                View Report
+            </a>
+            <a class="button" href="{{ url_for('download_report', period='24h') }}">
+                Download CSV
+            </a>
+        </div>
+
+    {% else %}
+
+        <p class="empty-message">
+            No Previous Day report is available yet.
+        </p>
+
+    {% endif %}
 
 
-        <!-- Last Month Report -->
-        <h3 style="margin-top: 32px;">Last Month Report</h3>
+    <!-- Last Month Report -->
 
-        {% if report_monthly %}
+    <h3>
+        Last Month Report
+    </h3>
 
-            <p class="muted">
-                {{ report_monthly.description }}
-            </p>
+    {% if report_monthly %}
 
-            <p>
-                <strong>Status:</strong> Report available
-            </p>
+        <p class="muted">
+            {{ report_monthly.window }}
+        </p>
 
-            <div class="cards" style="margin: 12px 0 18px 0;">
+        <p>
+            <strong>Status:</strong>
+            Report available
+        </p>
 
-                <div class="card">
-                    <div>Orders</div>
-                    <div class="number">{{ report_monthly.orders_count }}</div>
-                </div>
+        <div class="cards" style="margin: 12px 0;">
 
-                <div class="card">
-                    <div>Revenue</div>
-                    <div class="number">{{ report_monthly.revenue_display }}</div>
-                </div>
-
+            <div class="card" style="margin-bottom: 0;">
+                <div>Orders</div>
+                <div class="number">{{ report_monthly.order_count }}</div>
             </div>
 
-            <p>
-                <strong>File:</strong>
-                {{ report_monthly.key }}
-            </p>
-
-            <p>
-                <strong>Last Modified:</strong>
-                {{ report_monthly.last_modified }}
-            </p>
-
-            <p>
-                <strong>Size:</strong>
-                {{ report_monthly.size }} bytes
-            </p>
-
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <a class="button" href="{{ url_for('view_report', period='monthly') }}">
-                    View Monthly Report
-                </a>
-
-                <a class="button" href="{{ url_for('download_report', period='monthly') }}">
-                    Download Monthly CSV
-                </a>
+            <div class="card" style="margin-bottom: 0;">
+                <div>Revenue</div>
+                <div class="number">${{ "%.2f"|format(report_monthly.revenue) }}</div>
             </div>
 
-        {% else %}
+        </div>
 
-            <p class="empty-message">
-                No Last Month report is available yet.
-            </p>
+        <p>
+            <strong>File:</strong>
+            {{ report_monthly.key }}
+        </p>
 
-        {% endif %}
+        <p>
+            <strong>Last Modified:</strong>
+            {{ report_monthly.last_modified }}
+        </p>
 
-    </section>
+        <p>
+            <strong>Size:</strong>
+            {{ report_monthly.size }} bytes
+        </p>
 
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <a class="button" href="{{ url_for('view_report', period='monthly') }}">
+                View Monthly Report
+            </a>
+            <a class="button" href="{{ url_for('download_report', period='monthly') }}">
+                Download Monthly CSV
+            </a>
+        </div>
+
+    {% else %}
+
+        <p class="empty-message">
+            No Last Month report is available yet.
+            A valid report is generated even when there are zero orders.
+        </p>
+
+    {% endif %}
 
     <!-- ========================================================= -->
     <!-- PRODUCT INVENTORY -->
