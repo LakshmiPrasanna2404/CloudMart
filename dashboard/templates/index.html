@@ -127,6 +127,38 @@
             color: #667085;
             padding: 10px 0;
         }
+
+        .report-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 220px));
+            gap: 12px;
+            margin: 14px 0 18px;
+        }
+
+        .report-stat {
+            background: #f8fafc;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+
+        .report-stat span {
+            display: block;
+            color: #667085;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .report-stat strong {
+            font-size: 22px;
+        }
+
+        .report-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
     </style>
 </head>
 
@@ -261,7 +293,7 @@
         </div>
 
 
-        <!-- Latest Report -->
+        <!-- Previous Day Report -->
 
         <div class="card">
 
@@ -289,138 +321,159 @@
         </h2>
 
         <p class="muted">
-            Reports are generated automatically and stored securely in S3.
-            Revenue is included inside every CSV report.
+            Reports are generated automatically at 12:00 AM UTC and stored securely in S3.
+            A report is created even when there are no orders in the reporting period.
         </p>
 
 
-        <!-- Previous Day Report -->
+        <!-- Previous Day -->
 
-    <h3>
-        Previous Day Report
-    </h3>
+        <h3>
+            Previous Day Report
+        </h3>
 
-    {% if report_24h %}
+        {% if report_24h %}
 
-        <p class="muted">
-            {{ report_24h.window }}
-        </p>
+            <p class="muted">
+                {{ report_24h.window_text }}
+            </p>
 
-        <p>
-            <strong>Status:</strong>
-            Report available
-        </p>
+            <div class="report-stats">
 
-        <div class="cards" style="margin: 12px 0;">
+                <div class="report-stat">
+                    <span>Orders</span>
+                    <strong>{{ report_24h.order_count }}</strong>
+                </div>
 
-            <div class="card" style="margin-bottom: 0;">
-                <div>Orders</div>
-                <div class="number">{{ report_24h.order_count }}</div>
+                <div class="report-stat">
+                    <span>Revenue</span>
+                    <strong>{{ report_24h.revenue_display }}</strong>
+                </div>
+
             </div>
 
-            <div class="card" style="margin-bottom: 0;">
-                <div>Revenue</div>
-                <div class="number">${{ "%.2f"|format(report_24h.revenue) }}</div>
+            <p>
+                <strong>Status:</strong>
+                Report available
+            </p>
+
+            <p>
+                <strong>File:</strong>
+                {{ report_24h.key }}
+            </p>
+
+            <p>
+                <strong>Last Modified:</strong>
+                {{ report_24h.last_modified }}
+            </p>
+
+            <p>
+                <strong>Size:</strong>
+                {{ report_24h.size }} bytes
+            </p>
+
+            <div class="report-actions">
+
+                <a
+                    class="button"
+                    href="{{ url_for('view_report', period='24h') }}"
+                >
+                    View Report
+                </a>
+
+                <a
+                    class="button"
+                    href="{{ url_for('download_report', period='24h') }}"
+                >
+                    Download CSV
+                </a>
+
             </div>
 
-        </div>
+        {% else %}
 
-        <p>
-            <strong>File:</strong>
-            {{ report_24h.key }}
-        </p>
+            <p class="empty-message">
+                No Previous Day report is available yet.
+            </p>
 
-        <p>
-            <strong>Last Modified:</strong>
-            {{ report_24h.last_modified }}
-        </p>
-
-        <p>
-            <strong>Size:</strong>
-            {{ report_24h.size }} bytes
-        </p>
-
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <a class="button" href="{{ url_for('view_report', period='24h') }}">
-                View Report
-            </a>
-            <a class="button" href="{{ url_for('download_report', period='24h') }}">
-                Download CSV
-            </a>
-        </div>
-
-    {% else %}
-
-        <p class="empty-message">
-            No Previous Day report is available yet.
-        </p>
-
-    {% endif %}
+        {% endif %}
 
 
-    <!-- Last Month Report -->
+        <!-- Last Month -->
 
-    <h3>
-        Last Month Report
-    </h3>
+        <h3>
+            Last Month Report
+        </h3>
 
-    {% if report_monthly %}
+        {% if report_monthly %}
 
-        <p class="muted">
-            {{ report_monthly.window }}
-        </p>
+            <p class="muted">
+                {{ report_monthly.window_text }}
+            </p>
 
-        <p>
-            <strong>Status:</strong>
-            Report available
-        </p>
+            <div class="report-stats">
 
-        <div class="cards" style="margin: 12px 0;">
+                <div class="report-stat">
+                    <span>Orders</span>
+                    <strong>{{ report_monthly.order_count }}</strong>
+                </div>
 
-            <div class="card" style="margin-bottom: 0;">
-                <div>Orders</div>
-                <div class="number">{{ report_monthly.order_count }}</div>
+                <div class="report-stat">
+                    <span>Revenue</span>
+                    <strong>{{ report_monthly.revenue_display }}</strong>
+                </div>
+
             </div>
 
-            <div class="card" style="margin-bottom: 0;">
-                <div>Revenue</div>
-                <div class="number">${{ "%.2f"|format(report_monthly.revenue) }}</div>
+            <p>
+                <strong>Status:</strong>
+                Report available
+            </p>
+
+            <p>
+                <strong>File:</strong>
+                {{ report_monthly.key }}
+            </p>
+
+            <p>
+                <strong>Last Modified:</strong>
+                {{ report_monthly.last_modified }}
+            </p>
+
+            <p>
+                <strong>Size:</strong>
+                {{ report_monthly.size }} bytes
+            </p>
+
+            <div class="report-actions">
+
+                <a
+                    class="button"
+                    href="{{ url_for('view_report', period='monthly') }}"
+                >
+                    View Monthly Report
+                </a>
+
+                <a
+                    class="button"
+                    href="{{ url_for('download_report', period='monthly') }}"
+                >
+                    Download Monthly CSV
+                </a>
+
             </div>
 
-        </div>
+        {% else %}
 
-        <p>
-            <strong>File:</strong>
-            {{ report_monthly.key }}
-        </p>
+            <p class="empty-message">
+                No Last Month report is available yet.
+                The report will still be created even if there were zero orders.
+            </p>
 
-        <p>
-            <strong>Last Modified:</strong>
-            {{ report_monthly.last_modified }}
-        </p>
+        {% endif %}
 
-        <p>
-            <strong>Size:</strong>
-            {{ report_monthly.size }} bytes
-        </p>
+    </section>
 
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <a class="button" href="{{ url_for('view_report', period='monthly') }}">
-                View Monthly Report
-            </a>
-            <a class="button" href="{{ url_for('download_report', period='monthly') }}">
-                Download Monthly CSV
-            </a>
-        </div>
-
-    {% else %}
-
-        <p class="empty-message">
-            No Last Month report is available yet.
-            A valid report is generated even when there are zero orders.
-        </p>
-
-    {% endif %}
 
     <!-- ========================================================= -->
     <!-- PRODUCT INVENTORY -->
