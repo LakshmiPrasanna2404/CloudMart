@@ -938,7 +938,76 @@ def lambda_handler(event, context):
             return login_customer(event)
 
         # ----------------------------------------------------
+        # PUBLIC PRODUCT READ ACCESS
+        #
+        # GET /products and GET /products/{id} are intentionally
+        # public read-only operations. No Authorization header
+        # is required for these GET requests.
+        #
+        # The downstream Product Lambda receives the "products"
+        # role so its existing defense-in-depth checks continue
+        # to allow product reads while all write operations remain
+        # protected by the normal token-based RBAC flow.
+        # ----------------------------------------------------
+
+        if method == "GET" and is_product_route(path):
+            role = "products"
+            customer_id = None
+
+            permission = get_route_permission(
+                method,
+                path,
+            )
+
+            if permission != "products":
+                return json_response(
+                    404,
+                    {
+                        "error": "not_found",
+                        "message": "No matching route",
+                    },
+                )
+
+            target_function = get_target_lambda(path)
+
+            if not target_function:
+                return json_response(
+                    404,
+                    {
+                        "error": "not_found",
+                        "message": "Target Lambda not found",
+                    },
+                )
+
+            request_context = event.setdefault(
+                "requestContext",
+                {},
+            )
+
+            authorizer_context = request_context.setdefault(
+                "authorizer",
+                {},
+            )
+
+            authorizer_context["role"] = role
+
+            log(
+                "INFO",
+                "Public product GET authorized",
+                method=method,
+                path=path,
+                target=target_function,
+            )
+
+            return invoke_downstream_lambda(
+                target_function,
+                event,
+            )
+
+        # ----------------------------------------------------
         # AUTHORIZATION HEADER
+        #
+        # All non-public routes still require a Bearer token.
         # ----------------------------------------------------
 
         incoming_token = extract_bearer_token(event)
