@@ -186,6 +186,22 @@ def upload_report(
     key = f"{prefix.rstrip('/')}/{filename}"
     csv_data = build_csv(rows)
 
+    # The CSV contains one row per order item, so calculate order count
+    # and revenue by unique order_id rather than by CSV row.
+    order_totals = {}
+    for row in rows:
+        order_id = str(row.get("order_id") or "").strip()
+        if not order_id:
+            continue
+        if order_id not in order_totals:
+            try:
+                order_totals[order_id] = float(row.get("total_amount") or 0)
+            except (TypeError, ValueError):
+                order_totals[order_id] = 0.0
+
+    unique_order_count = len(order_totals)
+    total_revenue = sum(order_totals.values())
+
     s3.put_object(
         Bucket=REPORTS_BUCKET,
         Key=key,
@@ -197,6 +213,8 @@ def upload_report(
             "report-start-utc": start_time.isoformat(),
             "report-end-utc": end_time.isoformat(),
             "order-row-count": str(len(rows)),
+            "unique-order-count": str(unique_order_count),
+            "total-revenue": f"{total_revenue:.2f}",
         },
     )
 
@@ -224,6 +242,8 @@ def upload_report(
         "bucket": REPORTS_BUCKET,
         "key": key,
         "row_count": len(rows),
+        "order_count": unique_order_count,
+        "revenue": total_revenue,
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
     }
