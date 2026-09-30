@@ -400,22 +400,32 @@ jobs:
           aws lambda wait function-updated \
             --function-name cloudmart-prod-report-generate
 
-      - name: Generate reports immediately
+      - name: Generate previous day and last month reports
+        shell: bash
         run: |
           set -euo pipefail
 
+          rm -f /tmp/report-generation.json
+
           aws lambda invoke \
             --function-name cloudmart-prod-report-generate \
-            --payload '{}' \
+            --region "$AWS_REGION" \
             --cli-binary-format raw-in-base64-out \
-            report-generation-response.json
+            --payload '{}' \
+            /tmp/report-generation.json >/tmp/report-invoke-meta.json
 
-          cat report-generation-response.json
+          cat /tmp/report-invoke-meta.json
+          cat /tmp/report-generation.json
 
-          if grep -q '"statusCode": 200' report-generation-response.json; then
+          if grep -q '"FunctionError"' /tmp/report-invoke-meta.json; then
+            echo "Report Lambda returned FunctionError"
+            exit 1
+          fi
+
+          if grep -q '"statusCode": 200' /tmp/report-generation.json; then
             echo "Previous day and last month reports generated successfully"
           else
-            echo "Report generation Lambda did not return statusCode 200"
+            echo "Unexpected report Lambda response"
             exit 1
           fi
 
@@ -685,9 +695,12 @@ jobs:
           test -f dashboard/requirements.txt
           test -f dashboard/templates/index.html
 
+          rm -rf dashboard/vendor
+          python -m pip install -r dashboard/requirements.txt -t dashboard/vendor --quiet
+
           rm -f dashboard.zip
           cd dashboard
-          zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*' 'vendor/*'
+          zip -r ../dashboard.zip . -x '*.pyc' '*__pycache__*'
           cd ..
 
       - name: Upload dashboard package
@@ -729,15 +742,9 @@ jobs:
           rm -rf "${APP_DIR:?}"/*
           unzip -oq /tmp/dashboard.zip -d "$APP_DIR"
 
+          # Use the dependencies already included in the dashboard package.
           test -f "$APP_DIR/app.py"
-          test -f "$APP_DIR/requirements.txt"
-
-          # Install dependencies on the EC2 instance using the same
-          # Python runtime that will execute the dashboard. This avoids
-          # copying packages built for a different Python version.
-          python3 -m venv "$APP_DIR/venv"
-          "$APP_DIR/venv/bin/python" -m pip install --upgrade pip
-          "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+          test -d "$APP_DIR/vendor"
 
           DB_USER=$(aws ssm get-parameter \
             --name "/cloudmart/prod/db/username" \
@@ -776,7 +783,8 @@ jobs:
           User=root
           WorkingDirectory=$APP_DIR
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=$APP_DIR/venv/bin/python $APP_DIR/app.py
+          Environment="PYTHONPATH=$APP_DIR/vendor"
+          ExecStart=/usr/bin/python3 app.py
           Restart=always
           RestartSec=5
 
@@ -817,41 +825,60 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Always get the current dashboard instance from CloudFormation.
-          # Never use a hardcoded EC2 instance ID because CloudFormation may
-          # replace the instance during a stack update or clean redeploy.
+          # Always get the current dashboard instance created by CloudFormation.
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-monitoring \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
             --output text)
 
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+          if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
             echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
             exit 1
           fi
 
-          echo "Dashboard EC2 instance from CloudFormation: $INSTANCE_ID"
+          echo "Dashboard EC2 instance: $INSTANCE_ID"
 
-          # Verify the instance is the CloudMart dashboard before sending SSM.
-          PROJECT_TAG=$(aws ec2 describe-tags \
-            --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Project" \
+          TAGS=$(aws ec2 describe-tags \
+            --filters "Name=resource-id,Values=$INSTANCE_ID" \
             --region "$AWS_REGION" \
-            --query "Tags[0].Value" \
+            --query "Tags[?Key=='Project' || Key=='Component'].[Key,Value]" \
             --output text)
 
-          COMPONENT_TAG=$(aws ec2 describe-tags \
-            --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Component" \
-            --region "$AWS_REGION" \
-            --query "Tags[0].Value" \
-            --output text)
+          echo "Dashboard instance tags:"
+          echo "$TAGS"
 
-          if [ "$PROJECT_TAG" != "CloudMart" ] || [ "$COMPONENT_TAG" != "Dashboard" ]; then
-            echo "ERROR: CloudFormation returned an EC2 instance that is not the CloudMart Dashboard"
-            echo "Project tag: $PROJECT_TAG"
-            echo "Component tag: $COMPONENT_TAG"
+          if ! grep -q $'Project\tCloudMart' <<< "$TAGS"; then
+            echo "ERROR: Dashboard instance is missing Project=CloudMart tag"
             exit 1
           fi
+
+          if ! grep -q $'Component\tDashboard' <<< "$TAGS"; then
+            echo "ERROR: Dashboard instance is missing Component=Dashboard tag"
+            exit 1
+          fi
+
+          # Wait for SSM agent to become online after a new EC2 instance is created.
+          for attempt in {1..30}; do
+            PING_STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --region "$AWS_REGION" \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || true)
+
+            echo "SSM agent check $attempt/30: $PING_STATUS"
+
+            if [[ "$PING_STATUS" == "Online" ]]; then
+              break
+            fi
+
+            if [[ "$attempt" == "30" ]]; then
+              echo "ERROR: Dashboard instance did not become SSM Online"
+              exit 1
+            fi
+
+            sleep 10
+          done
 
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
@@ -866,15 +893,16 @@ jobs:
 
           echo "SSM command: $COMMAND_ID"
 
-          for attempt in {1..30}; do
+          # Allow up to 10 minutes for package installation and dashboard startup.
+          for attempt in {1..60}; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "Status" \
-              --output text)
+              --output text 2>/dev/null || true)
 
-            echo "Attempt $attempt: $STATUS"
+            echo "Attempt $attempt/60: $STATUS"
 
             case "$STATUS" in
               Success)
@@ -891,7 +919,7 @@ jobs:
                   --command-id "$COMMAND_ID" \
                   --instance-id "$INSTANCE_ID" \
                   --region "$AWS_REGION" \
-                  --query "[StandardOutputContent,StandardErrorContent]" \
+                  --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
                   --output text
                 exit 1
                 ;;
@@ -900,5 +928,12 @@ jobs:
             sleep 10
           done
 
-          echo "Timed out waiting for SSM deployment"
+          echo "Timed out waiting for SSM dashboard deployment"
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
+            --output text || true
           exit 1
+
