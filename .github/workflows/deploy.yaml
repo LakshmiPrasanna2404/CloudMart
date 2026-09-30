@@ -169,10 +169,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucketName'].OutputValue" \
+            --output text)
+
+          if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
+            echo "ReportsBucketName was not found in cloudmart-data"
+            exit 1
+          fi
+
+          echo "Reports bucket: $REPORTS_BUCKET"
+
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
-            --parameter-overrides Environment=prod \
+            --parameter-overrides \
+              Environment=prod \
+              ReportsBucketName="$REPORTS_BUCKET" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
