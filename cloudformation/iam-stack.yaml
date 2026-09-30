@@ -325,7 +325,8 @@ Resources:
                 Action:
                   - ses:SendEmail
 
-                Resource: "*"
+                Resource: 
+                  !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/lakshmiprasanna2414@gmail.com
 
 
               - Sid: OwnLogGroupOnly
