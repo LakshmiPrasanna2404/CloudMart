@@ -796,14 +796,59 @@ jobs:
         run: |
           set -euo pipefail
 
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-app \
-            --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
-            --output text)
+          # Resolve the dashboard instance without assuming which stack exposes
+          # the output. The current CloudMart architecture creates the EC2
+          # dashboard from cloudmart-app, but the tag fallback also supports
+          # existing deployments where the output is absent.
+          INSTANCE_ID=""
+
+          for STACK_NAME in cloudmart-app cloudmart-monitoring; do
+            VALUE=$(aws cloudformation describe-stacks \
+              --stack-name "$STACK_NAME" \
+              --region "$AWS_REGION" \
+              --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
+              --output text 2>/dev/null || true)
+
+            if [[ -n "$VALUE" && "$VALUE" != "None" && "$VALUE" != "null" ]]; then
+              INSTANCE_ID="$VALUE"
+              echo "Dashboard instance found from $STACK_NAME output: $INSTANCE_ID"
+              break
+            fi
+          done
+
+          # Final fallback: locate the CloudFormation-created dashboard by its
+          # stable tags. This avoids hard-coding an EC2 instance ID.
+          if [[ -z "$INSTANCE_ID" ]]; then
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --region "$AWS_REGION" \
+              --filters \
+                "Name=tag:Project,Values=CloudMart" \
+                "Name=tag:Component,Values=Dashboard" \
+                "Name=instance-state-name,Values=pending,running" \
+              --query "Reservations[].Instances[] | sort_by(@, &LaunchTime)[-1].InstanceId" \
+              --output text 2>/dev/null || true)
+
+            if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]]; then
+              echo "Dashboard instance found from CloudMart tags: $INSTANCE_ID"
+            fi
+          fi
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: DashboardInstanceId was not found in cloudmart-app"
+            echo "ERROR: Could not find the CloudMart dashboard EC2 instance."
+            echo "--- CloudFormation outputs ---"
+            aws cloudformation describe-stacks \
+              --stack-name cloudmart-app \
+              --region "$AWS_REGION" \
+              --query "Stacks[0].Outputs" \
+              --output table || true
+            echo "--- CloudMart dashboard instances ---"
+            aws ec2 describe-instances \
+              --region "$AWS_REGION" \
+              --filters \
+                "Name=tag:Project,Values=CloudMart" \
+                "Name=tag:Component,Values=Dashboard" \
+              --query "Reservations[].Instances[].[InstanceId,State.Name,PrivateIpAddress,PublicIpAddress,LaunchTime]" \
+              --output table || true
             exit 1
           fi
 
@@ -841,7 +886,6 @@ jobs:
               --region "$AWS_REGION" \
               --query "InstanceInformationList[?InstanceId=='$INSTANCE_ID'].[InstanceId,PingStatus,AgentVersion,PlatformName,LastPingDateTime]" \
               --output table || true
-            echo "The EC2 UserData starts amazon-ssm-agent; if this still fails, inspect the instance console/user-data log after the workflow run."
             exit 1
           fi
 
