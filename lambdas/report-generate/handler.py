@@ -177,8 +177,7 @@ def generate_previous_day_report(now=None):
     end_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_time = end_time.replace(day=end_time.day - 1)
 
-    # replace(day=day-1) does not work across month boundaries, so use
-    # a one-day timedelta after normalizing to midnight.
+    # Use timedelta so this also works correctly on the first day of a month/year.
     start_time = end_time - timedelta(days=1)
 
     rows = fetch_orders(start_time, end_time)
