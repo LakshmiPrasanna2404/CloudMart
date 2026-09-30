@@ -67,7 +67,9 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
-            --parameter-overrides Environment=prod \
+            --parameter-overrides \
+              Environment=prod \
+              DashboardAccessCidr=0.0.0.0/0 \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -167,25 +169,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-data \
-            --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucketName'].OutputValue" \
-            --output text)
-
-          if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
-            echo "Reports bucket was not found in cloudmart-data"
-            exit 1
-          fi
-
-          echo "Reports bucket: $REPORTS_BUCKET"
-
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
-            --parameter-overrides \
-              Environment=prod \
-              ReportsBucketName="$REPORTS_BUCKET" \
+            --parameter-overrides Environment=prod \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -436,6 +423,54 @@ jobs:
             --function-name cloudmart-prod-report-generate \
             --query "Configuration.[FunctionName,State,Runtime]" \
             --output table
+
+      - name: Verify report schedule
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RULE_NAME="cloudmart-prod-daily-report"
+          EXPECTED_SCHEDULE="cron(0 0 * * ? *)"
+
+          echo "Checking EventBridge rule: $RULE_NAME"
+
+          RULE_STATE=$(aws events describe-rule \
+            --name "$RULE_NAME" \
+            --region "$AWS_REGION" \
+            --query "State" \
+            --output text)
+
+          RULE_SCHEDULE=$(aws events describe-rule \
+            --name "$RULE_NAME" \
+            --region "$AWS_REGION" \
+            --query "ScheduleExpression" \
+            --output text)
+
+          echo "EventBridge state: $RULE_STATE"
+          echo "EventBridge schedule: $RULE_SCHEDULE"
+
+          if [ "$RULE_STATE" != "ENABLED" ]; then
+            echo "ERROR: Report schedule is not ENABLED."
+            exit 1
+          fi
+
+          if [ "$RULE_SCHEDULE" != "$EXPECTED_SCHEDULE" ]; then
+            echo "ERROR: Expected $EXPECTED_SCHEDULE but found $RULE_SCHEDULE"
+            exit 1
+          fi
+
+          TARGET_COUNT=$(aws events list-targets-by-rule \
+            --rule "$RULE_NAME" \
+            --region "$AWS_REGION" \
+            --query "length(Targets[?Id=='ReportGenerateTarget'])" \
+            --output text)
+
+          if [ "$TARGET_COUNT" != "1" ]; then
+            echo "ERROR: ReportGenerateTarget is not configured correctly."
+            exit 1
+          fi
+
+          echo "Verified: EventBridge invokes the report Lambda daily at 00:00 UTC."
 
       - name: Verify monitoring stack
         run: |
@@ -770,7 +805,7 @@ jobs:
           WorkingDirectory=$APP_DIR
           EnvironmentFile=/etc/cloudmart-dashboard.env
           Environment="PYTHONPATH=$APP_DIR/vendor"
-          ExecStart=/usr/bin/python3 app.py
+          ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --bind 0.0.0.0:80 app:app
           Restart=always
           RestartSec=5
 
@@ -811,82 +846,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The dashboard EC2 instance is owned by cloudmart-app.
-          # cloudmart-monitoring does not own DashboardInstanceId, so do not
-          # depend on an output from that stack. Keep tag discovery as a
-          # recovery path for older deployments.
           INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-app \
+            --stack-name cloudmart-monitoring \
             --region "$AWS_REGION" \
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
-            --output text 2>/dev/null || true)
+            --output text)
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "DashboardInstanceId not found in cloudmart-app; checking EC2 tags..."
-
-            INSTANCE_ID=$(aws ec2 describe-instances \
-              --region "$AWS_REGION" \
-              --filters \
-                "Name=tag:Project,Values=CloudMart" \
-                "Name=tag:Component,Values=Dashboard" \
-                "Name=instance-state-name,Values=pending,running" \
-              --query "Reservations[].Instances | sort_by(@, &LaunchTime)[-1].InstanceId" \
-              --output text 2>/dev/null || true)
-          fi
-
-          if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: Could not find the CloudMart dashboard EC2 instance."
-            echo "CloudFormation stack: cloudmart-app"
-            echo "Expected output: DashboardInstanceId"
-            echo "Expected EC2 tags: Project=CloudMart, Component=Dashboard"
+            echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
             exit 1
           fi
 
           echo "Dashboard EC2 instance: $INSTANCE_ID"
 
-          echo "--- Dashboard EC2 details ---"
-          aws ec2 describe-instances \
-            --instance-ids "$INSTANCE_ID" \
-            --region "$AWS_REGION" \
-            --query "Reservations[0].Instances[0].[State.Name,PrivateIpAddress,PublicIpAddress,SubnetId,IamInstanceProfile.Arn]" \
-            --output table
-
-          # Do not call ssm:DescribeInstanceInformation here because the
-          # deployment role only needs the permission to send the deployment
-          # command and read its result. Retry SendCommand until the EC2
-          # instance has registered with Systems Manager.
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
-          COMMAND_ID=""
-          for attempt in {1..60}; do
-            echo "Waiting for dashboard EC2 to accept an SSM command: $attempt/60"
-
-            SEND_ERROR=$(mktemp)
-            COMMAND_ID=$(aws ssm send-command \
-              --instance-ids "$INSTANCE_ID" \
-              --document-name AWS-RunShellScript \
-              --comment "Deploy CloudMart Flask dashboard" \
-              --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
-              --region "$AWS_REGION" \
-              --query "Command.CommandId" \
-              --output text 2>"$SEND_ERROR" || true)
-
-            if [[ -n "$COMMAND_ID" && "$COMMAND_ID" != "None" ]]; then
-              rm -f "$SEND_ERROR"
-              break
-            fi
-
-            echo "SSM command not accepted yet:"
-            cat "$SEND_ERROR" || true
-            rm -f "$SEND_ERROR"
-            sleep 5
-          done
-
-          if [[ -z "$COMMAND_ID" || "$COMMAND_ID" == "None" ]]; then
-            echo "ERROR: Dashboard EC2 instance did not become available to SSM within 5 minutes."
-            echo "Instance: $INSTANCE_ID"
-            exit 1
-          fi
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy CloudMart Flask dashboard" \
+            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
+            --region "$AWS_REGION" \
+            --query "Command.CommandId" \
+            --output text)
 
           echo "SSM command: $COMMAND_ID"
 
