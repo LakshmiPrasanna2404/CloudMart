@@ -311,6 +311,7 @@ Resources:
               exec > >(tee -a /var/log/cloudmart-ssm-bootstrap.log) 2>&1
 
               REGION="${AWS_REGION_VALUE}"
+              ROLE_NAME=""
 
               echo "========================================"
               echo "CloudMart dashboard EC2 bootstrap started"
@@ -345,7 +346,7 @@ Resources:
                 sleep 5
               done
 
-              if [ -z "$TOKEN" ] || [ -z "${ROLE_NAME:-}" ]; then
+              if [ -z "$TOKEN" ] || [ -z "$ROLE_NAME" ]; then
                 echo "ERROR: EC2 instance profile credentials were not available."
                 exit 1
               fi
@@ -407,11 +408,11 @@ Resources:
               # HTTP 400 is acceptable here: it proves the HTTPS endpoint is
               # reachable. We only need to fail on connection/DNS failure.
               curl -fsS --connect-timeout 10 \
-                "https://ssm.${REGION}.amazonaws.com" \
+                "https://ssm.$REGION.amazonaws.com" \
                 -o /tmp/cloudmart-ssm-response.txt || true
 
               curl -fsS --connect-timeout 10 \
-                "https://ssmmessages.${REGION}.amazonaws.com" \
+                "https://ssmmessages.$REGION.amazonaws.com" \
                 -o /tmp/cloudmart-ssmmessages-response.txt || true
 
               echo "SSM Agent bootstrap completed successfully."
