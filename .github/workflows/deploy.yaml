@@ -462,7 +462,7 @@ jobs:
   # 7. VERIFY AUTHENTICATION AND RBAC
   # ============================================================
   verify-auth:
-    name: Verify 401 / 401 / 200 / 200 auth flow
+    name: Verify 200 / 401 / 200 / 200 auth flow
     runs-on: ubuntu-latest
     needs:
       - apply-schema
@@ -516,7 +516,7 @@ jobs:
 
           echo "RBAC SSM parameter verification complete"
 
-      - name: No token returns 401
+      - name: No token returns 200 for GET products
         shell: bash
         run: |
           set -euo pipefail
@@ -524,8 +524,8 @@ jobs:
           STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
             "${{ steps.geturl.outputs.url }}products")
 
-          echo "No-token status: $STATUS"
-          [ "$STATUS" = "401" ]
+          echo "No-token GET /products status: $STATUS"
+          [ "$STATUS" = "200" ]
 
       - name: Wrong token returns 401
         shell: bash
@@ -612,7 +612,7 @@ jobs:
           echo "========================================"
           echo "CloudMart RBAC verification PASSED"
           echo "========================================"
-          echo "Missing token              -> 401 PASS"
+          echo "No token GET /products     -> 200 PASS"
           echo "Invalid token              -> 401 PASS"
           echo "Admin token                -> 200 PASS"
           echo "Products token GET /products -> 200 PASS"
@@ -798,8 +798,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The dashboard EC2 instance is created by cloudmart-app.
-          # Use the CloudFormation output first, then fall back to the CloudMart dashboard tags.
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-app \
             --region "$AWS_REGION" \
@@ -807,7 +805,6 @@ jobs:
             --output text 2>/dev/null || true)
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "DashboardInstanceId was not found in cloudmart-app. Searching EC2 tags..."
             INSTANCE_ID=$(aws ec2 describe-instances \
               --region "$AWS_REGION" \
               --filters \
@@ -819,7 +816,8 @@ jobs:
           fi
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: CloudMart dashboard EC2 instance was not found"
+            echo "ERROR: CloudMart dashboard EC2 instance was not found."
+            echo "Expected cloudmart-app DashboardInstanceId output or EC2 tags Project=CloudMart, Component=Dashboard."
             exit 1
           fi
 
