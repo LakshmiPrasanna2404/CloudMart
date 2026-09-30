@@ -16,7 +16,7 @@ Parameters:
   DashboardAccessCidr:
     Type: String
     Description: CIDR allowed to reach the EC2 ops dashboard (your IP, not 0.0.0.0/0)
-    Default: 203.0.113.0/32
+    Default: 54.234.51.235/32
 
 Resources:
 
@@ -146,6 +146,11 @@ Resources:
       GroupDescription: Security group for the EC2 Flask dashboard
       VpcId: !Ref VPC
       SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref DashboardAccessCidr
+          Description: HTTP access to the ops dashboard
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
