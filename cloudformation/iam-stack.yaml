@@ -455,6 +455,23 @@ Resources:
 
             Statement:
 
+              - Sid: ListReportsOnly
+
+                Effect: Allow
+
+                Action:
+                  - s3:ListBucket
+
+                Resource:
+                  !Sub arn:aws:s3:::${ReportsBucketName}
+
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - reports/
+                      - reports/*
+
+
               - Sid: ReadReportsOnly
 
                 Effect: Allow
