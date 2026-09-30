@@ -167,10 +167,25 @@ jobs:
         run: |
           set -euo pipefail
 
+          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucketName'].OutputValue" \
+            --output text)
+
+          if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
+            echo "Reports bucket was not found in cloudmart-data"
+            exit 1
+          fi
+
+          echo "Reports bucket: $REPORTS_BUCKET"
+
           aws cloudformation deploy \
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
-            --parameter-overrides Environment=prod \
+            --parameter-overrides \
+              Environment=prod \
+              ReportsBucketName="$REPORTS_BUCKET" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -796,98 +811,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Resolve the dashboard instance without assuming which stack exposes
-          # the output. The current CloudMart architecture creates the EC2
-          # dashboard from cloudmart-app, but the tag fallback also supports
-          # existing deployments where the output is absent.
-          INSTANCE_ID=""
-
-          for STACK_NAME in cloudmart-app cloudmart-monitoring; do
-            VALUE=$(aws cloudformation describe-stacks \
-              --stack-name "$STACK_NAME" \
-              --region "$AWS_REGION" \
-              --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
-              --output text 2>/dev/null || true)
-
-            if [[ -n "$VALUE" && "$VALUE" != "None" && "$VALUE" != "null" ]]; then
-              INSTANCE_ID="$VALUE"
-              echo "Dashboard instance found from $STACK_NAME output: $INSTANCE_ID"
-              break
-            fi
-          done
-
-          # Final fallback: locate the CloudFormation-created dashboard by its
-          # stable tags. This avoids hard-coding an EC2 instance ID.
-          if [[ -z "$INSTANCE_ID" ]]; then
-            INSTANCE_ID=$(aws ec2 describe-instances \
-              --region "$AWS_REGION" \
-              --filters \
-                "Name=tag:Project,Values=CloudMart" \
-                "Name=tag:Component,Values=Dashboard" \
-                "Name=instance-state-name,Values=pending,running" \
-              --query "Reservations[].Instances[] | sort_by(@, &LaunchTime)[-1].InstanceId" \
-              --output text 2>/dev/null || true)
-
-            if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]]; then
-              echo "Dashboard instance found from CloudMart tags: $INSTANCE_ID"
-            fi
-          fi
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-monitoring \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue" \
+            --output text)
 
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "ERROR: Could not find the CloudMart dashboard EC2 instance."
-            echo "--- CloudFormation outputs ---"
-            aws cloudformation describe-stacks \
-              --stack-name cloudmart-app \
-              --region "$AWS_REGION" \
-              --query "Stacks[0].Outputs" \
-              --output table || true
-            echo "--- CloudMart dashboard instances ---"
-            aws ec2 describe-instances \
-              --region "$AWS_REGION" \
-              --filters \
-                "Name=tag:Project,Values=CloudMart" \
-                "Name=tag:Component,Values=Dashboard" \
-              --query "Reservations[].Instances[].[InstanceId,State.Name,PrivateIpAddress,PublicIpAddress,LaunchTime]" \
-              --output table || true
+            echo "ERROR: DashboardInstanceId was not found in cloudmart-monitoring"
             exit 1
           fi
 
           echo "Dashboard EC2 instance: $INSTANCE_ID"
-
-          echo "Waiting for EC2 SSM Agent to become Online..."
-          ONLINE=false
-          for attempt in {1..60}; do
-            PING_STATUS=$(aws ssm describe-instance-information \
-              --instance-information-filter-list "key=InstanceIds,valueSet=$INSTANCE_ID" \
-              --region "$AWS_REGION" \
-              --query "InstanceInformationList[0].PingStatus" \
-              --output text 2>/dev/null || true)
-
-            echo "SSM agent check $attempt/60: ${PING_STATUS:-Unknown}"
-
-            if [[ "$PING_STATUS" == "Online" ]]; then
-              ONLINE=true
-              break
-            fi
-
-            sleep 5
-          done
-
-          if [[ "$ONLINE" != true ]]; then
-            echo "ERROR: Dashboard instance did not become SSM Online"
-            echo "--- EC2 instance details ---"
-            aws ec2 describe-instances \
-              --instance-ids "$INSTANCE_ID" \
-              --region "$AWS_REGION" \
-              --query "Reservations[0].Instances[0].[State.Name,PrivateIpAddress,PublicIpAddress,SubnetId,SecurityGroupIds,IamInstanceProfile.Arn]" \
-              --output table || true
-            echo "--- SSM registration details ---"
-            aws ssm describe-instance-information \
-              --region "$AWS_REGION" \
-              --query "InstanceInformationList[?InstanceId=='$INSTANCE_ID'].[InstanceId,PingStatus,AgentVersion,PlatformName,LastPingDateTime]" \
-              --output table || true
-            exit 1
-          fi
 
           SCRIPT_B64=$(cat deploy-dashboard-on-ec2.b64)
 
