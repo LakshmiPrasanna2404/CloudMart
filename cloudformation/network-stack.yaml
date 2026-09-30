@@ -285,6 +285,27 @@ Resources:
       DestinationSecurityGroupId: !Ref VPCEndpointSecurityGroup
       Description: Allow the dashboard to reach SSM for config
 
+  # VPC DNS is required by the SSM agent to resolve ssm and ssmmessages endpoints.
+  EC2EgressToVpcDnsUDP:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+      CidrIp: 10.0.0.2/32
+      Description: Allow the dashboard to use the VPC DNS resolver
+
+  EC2EgressToVpcDnsTCP:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+      CidrIp: 10.0.0.2/32
+      Description: Allow TCP DNS fallback to the VPC DNS resolver
+
   EC2EgressToS3:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
