@@ -858,6 +858,18 @@ jobs:
             exit 1
           fi
 
+          echo "Checking dashboard EC2 instance state and IAM profile..."
+          aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --query "Reservations[0].Instances[0].[State.Name,SubnetId,PrivateIpAddress,PublicIpAddress,IamInstanceProfile.Arn]" \
+            --output table
+
+          echo "Checking SSM managed-instance registration..."
+          aws ssm describe-instance-information \
+            --region "$AWS_REGION" \
+            --output table || true
+
           # Wait for SSM agent to become online after a new EC2 instance is created.
           for attempt in {1..60}; do
             PING_STATUS=$(aws ssm describe-instance-information \
