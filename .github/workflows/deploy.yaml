@@ -859,20 +859,20 @@ jobs:
           fi
 
           # Wait for SSM agent to become online after a new EC2 instance is created.
-          for attempt in {1..30}; do
+          for attempt in {1..60}; do
             PING_STATUS=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
               --region "$AWS_REGION" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || true)
 
-            echo "SSM agent check $attempt/30: $PING_STATUS"
+            echo "SSM agent check $attempt/60: $PING_STATUS"
 
             if [[ "$PING_STATUS" == "Online" ]]; then
               break
             fi
 
-            if [[ "$attempt" == "30" ]]; then
+            if [[ "$attempt" == "60" ]]; then
               echo "ERROR: Dashboard instance did not become SSM Online"
               exit 1
             fi
