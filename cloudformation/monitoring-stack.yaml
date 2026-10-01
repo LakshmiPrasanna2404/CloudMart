@@ -196,6 +196,44 @@ Resources:
       AlarmActions:
         - !Ref MonitoringTopic
 
+  OrdersFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-orders-failed
+      AlarmDescription: CloudMart order failures detected.
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: failedorders
+          Label: Orders Failed
+          Expression: !Sub >-
+            SELECT SUM(OrdersFailed) FROM "cloudmart" WHERE Environment = '${Environment}'
+          Period: 300
+          ReturnData: true
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  LowStockEventsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cloudmart-${Environment}-low-stock-events
+      AlarmDescription: CloudMart low-stock events detected.
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref LambdaErrorThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: lowstock
+          Label: Low Stock Events
+          Expression: !Sub >-
+            SELECT SUM(LowStockEvents) FROM "cloudmart" WHERE Environment = '${Environment}'
+          Period: 300
+          ReturnData: true
+      AlarmActions:
+        - !Ref MonitoringTopic
+
   CloudMartDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
