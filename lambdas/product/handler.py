@@ -304,6 +304,11 @@ def create_product(body):
         productId=product_id
     )
 
+    publish_metric(
+        "ProductsCreated",
+        {"Environment": ENVIRONMENT}
+    )
+
     return response(
         201,
         {
@@ -544,6 +549,11 @@ def update_product(product_id, body):
         fields=list(updates.keys())
     )
 
+    publish_metric(
+        "ProductsUpdated",
+        {"Environment": ENVIRONMENT}
+    )
+
     return response(
         200,
         updated
@@ -594,6 +604,11 @@ def delete_product(product_id):
         "INFO",
         "Product soft-deleted",
         productId=product_id
+    )
+
+    publish_metric(
+        "ProductsDeleted",
+        {"Environment": ENVIRONMENT}
     )
 
     return {
