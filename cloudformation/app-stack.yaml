@@ -245,30 +245,6 @@ Resources:
               "CloudMart Low Stock Alert: Product ID <productId> now has
               only <stockCount> units remaining. Please restock soon."
 
-  # ---------- EVENTBRIDGE RULE: order cancelled → SNS TOPIC ----------
-  OrderCancelledRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub cloudmart-${Environment}-order-cancelled-rule
-      EventBusName: !Ref CloudMartEventBus
-      EventPattern:
-        source: ["cloudmart.orders"]
-        detail-type: ["OrderCancelled"]
-      State: ENABLED
-      Targets:
-        - Arn: !Ref OrderConfirmationsTopic
-          Id: OrderCancelledTarget
-          InputTransformer:
-            InputPathsMap:
-              orderId: "$.detail.orderId"
-              customerId: "$.detail.customerId"
-              previousStatus: "$.detail.previousStatus"
-            InputTemplate: >-
-              "CloudMart Order Cancelled: Order #<orderId> for customer
-              #<customerId> was cancelled from status <previousStatus>.
-              Inventory has been restored."
-
-
   # ---------- EC2 DASHBOARD ----------
   # CloudFormation creates the dashboard host. The UserData below is
   # intentionally limited to EC2/SSM bootstrap. GitHub Actions deploys
