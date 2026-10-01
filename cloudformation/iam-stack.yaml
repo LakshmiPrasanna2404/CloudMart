@@ -325,8 +325,11 @@ Resources:
                 Action:
                   - ses:SendEmail
 
-                Resource: 
-                  !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/lakshmiprasanna2414@gmail.com
+                Resource: "*"
+
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: lakshmiprasanna2414@gmail.com
 
 
               - Sid: OwnLogGroupOnly
