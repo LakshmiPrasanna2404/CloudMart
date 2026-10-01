@@ -983,15 +983,28 @@ def place_order(
             }
         )
 
+        # ====================================================
+        # ORDER CONFIRMATION EMAIL
+        # ====================================================
+
+        product_names = ", ".join(
+            str(locked["product"]["name"])
+            for locked in locked_products
+        )
+
         send_customer_email(
             customer_email=customer_email,
-            subject=f"CloudMart Order Confirmation - Order #{order_id}",
+            subject=f"CloudMart Order Confirmation — Order #{order_id}",
             body=(
                 "Hello,\n\n"
-                f"Your CloudMart order #{order_id} has been confirmed.\n\n"
-                f"Customer ID: {customer_id}\n"
-                f"Total amount: ${float(total_amount):.2f}\n\n"
                 "Thank you for shopping with CloudMart.\n\n"
+                f"Your order #{order_id} has been confirmed successfully.\n\n"
+                f"Customer ID: {customer_id}\n"
+                f"Product: {product_names}\n"
+                f"Total Amount: ${float(total_amount):.2f}\n"
+                "Order Status: CONFIRMED\n\n"
+                "Thank you for choosing CloudMart.\n\n"
+                "Regards,\n"
                 "CloudMart Team"
             ),
             customer_id=customer_id,
@@ -1524,6 +1537,7 @@ def cancel_order(
                 """
                 SELECT
                     product_id,
+                    product_name_snapshot,
                     quantity
                 FROM order_items
                 WHERE order_id = %s
@@ -1645,14 +1659,19 @@ def cancel_order(
         # EVENTS
         # ====================================================
 
+        product_names = ", ".join(
+            str(item["product_name_snapshot"])
+            for item in items
+        )
+
         publish_order_event(
             "OrderCancelled",
             order_id,
             order["customer_id"],
             "CANCELLED",
             {
-                "previousStatus":
-                    current_status
+                "previousStatus": current_status,
+                "productName": product_names
             }
         )
 
