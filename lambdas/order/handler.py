@@ -1551,6 +1551,16 @@ def cancel_order(
             items = cur.fetchall()
 
 
+            # =================================================
+            # GET CUSTOMER EMAIL
+            # =================================================
+
+            customer_email = get_customer_email(
+                cur,
+                order["customer_id"]
+            )
+
+
             restored_items = []
 
 
@@ -1673,6 +1683,27 @@ def cancel_order(
                 "previousStatus": current_status,
                 "productName": product_names
             }
+        )
+
+        # ====================================================
+        # ORDER CANCELLATION EMAIL
+        # ====================================================
+
+        send_customer_email(
+            customer_email=customer_email,
+            subject=f"CloudMart Order Cancelled — Order #{order_id}",
+            body=(
+                "Hello,\n\n"
+                f"Your CloudMart order #{order_id} has been cancelled successfully.\n\n"
+                f"Customer ID: {order['customer_id']}\n"
+                f"Product: {product_names}\n"
+                "Order Status: CANCELLED\n\n"
+                "Thank you for choosing CloudMart.\n\n"
+                "Regards,\n"
+                "CloudMart Team"
+            ),
+            customer_id=order["customer_id"],
+            order_id=order_id
         )
 
 
