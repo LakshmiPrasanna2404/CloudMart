@@ -156,6 +156,11 @@ Resources:
           ToPort: 443
           CidrIp: !Ref DashboardAccessCidr
           Description: HTTPS access to the ops dashboard
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref DashboardAccessCidr
+          Description: SSH access for MySQL Workbench tunnel
       Tags:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-ec2-sg
