@@ -234,6 +234,7 @@ Resources:
       AlarmActions:
         - !Ref MonitoringTopic
 
+
   CloudMartDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -434,8 +435,28 @@ Resources:
             },
             {
               "type": "metric",
-              "x": 12,
+              "x": 0,
               "y": 30,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Latency (p95)",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "p95",
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "cloudmart-${Environment}-authorizer", {"label": "Authorizer"}],
+                  [".", ".", ".", "cloudmart-${Environment}-product", {"label": "Product"}],
+                  [".", ".", ".", "cloudmart-${Environment}-order", {"label": "Order"}],
+                  [".", ".", ".", "cloudmart-${Environment}-report-generate", {"label": "Report"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 42,
               "width": 12,
               "height": 6,
               "properties": {
@@ -449,8 +470,28 @@ Resources:
             },
             {
               "type": "metric",
-              "x": 0,
+              "x": 12,
               "y": 36,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Throttles",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Sum",
+                "metrics": [
+                  ["AWS/Lambda", "Throttles", "FunctionName", "cloudmart-${Environment}-authorizer", {"label": "Authorizer"}],
+                  [".", ".", ".", "cloudmart-${Environment}-product", {"label": "Product"}],
+                  [".", ".", ".", "cloudmart-${Environment}-order", {"label": "Order"}],
+                  [".", ".", ".", "cloudmart-${Environment}-report-generate", {"label": "Report"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 42,
               "width": 12,
               "height": 6,
               "properties": {
