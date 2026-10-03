@@ -338,27 +338,4 @@ Recreate all six stacks
 
 Do not manually recreate resources during the test.
 
-## Final review checklist
 
-Before final submission, verify:
-
-- [ ] Architecture diagram committed.
-- [ ] Data model documentation committed.
-- [ ] Deployment runbook committed.
-- [ ] README committed.
-- [ ] All six CloudFormation stacks deploy successfully.
-- [ ] CRUD operations verified.
-- [ ] All 9 CloudWatch alarms have SNS actions.
-- [ ] Monitoring dashboard contains required metrics.
-- [ ] No hardcoded credentials.
-- [ ] AWS resources are CloudFormation-managed.
-- [ ] GitHub Actions deployment is successful.
-- [ ] Clean teardown/redeployment test completed.
-- [ ] Final code is merged to `master`.
-- [ ] No unnecessary commits are made immediately before the demo.
-
-## Documentation
-
-- [Architecture](docs/architecture.md)
-- [Data model](docs/data-model.md)
-- [Deployment runbook](docs/deployment-runbook.md)
