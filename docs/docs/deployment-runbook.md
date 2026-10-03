@@ -532,38 +532,3 @@ Run the GitHub Actions workflow.
 
 The expected result is that all six stacks can be created again from the repository.
 
-## 16. Final deployment evidence
-
-For final review, record:
-
-- GitHub Actions workflow run.
-- Commit SHA.
-- Six CloudFormation stack statuses.
-- RDS status.
-- Lambda deployment status.
-- SNS subscriptions.
-- EventBridge rules.
-- S3 report generation.
-- EC2 dashboard availability.
-- CloudWatch dashboard.
-- 9 alarm states and SNS actions.
-- CRUD test evidence.
-- Email test evidence.
-
-Do not record passwords, tokens, access keys or other secrets.
-
-## 17. Final IaC rule
-
-CloudMart infrastructure must remain reproducible from:
-
-```text
-GitHub repository
-        +
-GitHub Actions
-        +
-AWS OIDC
-        +
-CloudFormation
-```
-
-Do not manually create replacement resources to bypass a deployment failure.
