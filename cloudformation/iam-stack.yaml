@@ -329,7 +329,7 @@ Resources:
 
                 Condition:
                   StringEquals:
-                    ses:FromAddress: !Ref FromEmail
+                    ses:FromAddress: lakshmiprasanna2414@gmail.com
 
 
               - Sid: OwnLogGroupOnly
