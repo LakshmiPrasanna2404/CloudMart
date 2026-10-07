@@ -7,6 +7,7 @@ Description: >
   The Lambda deployment artifacts bucket already exists and is reused.
 
 Parameters:
+
   Environment:
     Type: String
     Default: prod
@@ -28,35 +29,24 @@ Parameters:
   DBMasterUsername:
     Type: String
     NoEcho: true
-    Description: >
-      Database master username passed at deployment time from SSM.
-      Never hardcoded in the template.
+    Description: Passed in at deploy time from SSM — never hardcoded
 
   DBMasterUserPassword:
     Type: String
     NoEcho: true
-    Description: >
-      Database master password passed at deployment time from SSM.
-      Never hardcoded in the template.
+    Description: Passed in at deploy time from SSM — never hardcoded
 
   ArtifactsBucketName:
     Type: String
-    Description: >
-      Existing S3 bucket used for Lambda deployment artifacts.
-      This bucket is created outside this stack as the one-time
-      GitHub Actions bootstrap resource and is reused.
+    Description: Existing S3 bucket used for Lambda deployment artifacts
 
 Resources:
 
-  # ------------------------------------------------------------
-  # RDS SUBNET GROUP
-  # ------------------------------------------------------------
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
 
     Properties:
-      DBSubnetGroupDescription: !Sub >
-        Private subnets for cloudmart-${Environment} RDS
+      DBSubnetGroupDescription: !Sub "Private subnets for cloudmart-${Environment} RDS"
 
       SubnetIds:
         - Fn::ImportValue:
@@ -69,9 +59,7 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db-subnet-group
 
-  # ------------------------------------------------------------
-  # RDS MYSQL DATABASE
-  # ------------------------------------------------------------
+
   RDSInstance:
     Type: AWS::RDS::DBInstance
 
@@ -79,25 +67,19 @@ Resources:
     UpdateReplacePolicy: Delete
 
     Properties:
-      DBInstanceIdentifier:
-        !Sub cloudmart-${Environment}-db
+      DBInstanceIdentifier: !Sub cloudmart-${Environment}-db
 
       Engine: mysql
 
-      DBInstanceClass:
-        !Ref DBInstanceClass
+      DBInstanceClass: !Ref DBInstanceClass
 
-      AllocatedStorage:
-        !Ref DBAllocatedStorage
+      AllocatedStorage: !Ref DBAllocatedStorage
 
-      MasterUsername:
-        !Ref DBMasterUsername
+      MasterUsername: !Ref DBMasterUsername
 
-      MasterUserPassword:
-        !Ref DBMasterUserPassword
+      MasterUserPassword: !Ref DBMasterUserPassword
 
-      DBSubnetGroupName:
-        !Ref DBSubnetGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
 
       VPCSecurityGroups:
         - Fn::ImportValue:
@@ -117,16 +99,7 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-db
 
-  # ------------------------------------------------------------
-  # REPORTS S3 BUCKET
-  #
-  # IMPORTANT:
-  # The prod bucket already exists:
-  # cloudmart-prod-reports-393476285814
-  #
-  # It must be IMPORTED into this CloudFormation stack instead
-  # of being created again.
-  # ------------------------------------------------------------
+
   ReportsBucket:
     Type: AWS::S3::Bucket
 
@@ -134,8 +107,7 @@ Resources:
     UpdateReplacePolicy: Delete
 
     Properties:
-      BucketName:
-        !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
+      BucketName: !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
 
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -152,43 +124,36 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-${Environment}-reports
 
-# ------------------------------------------------------------
-# OUTPUTS
-# ------------------------------------------------------------
+
 Outputs:
 
   RDSEndpoint:
-    Description: RDS MySQL endpoint
-    Value:
-      !GetAtt RDSInstance.Endpoint.Address
+    Description: RDS database endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
 
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-rds-endpoint
+      Name: !Sub cloudmart-${Environment}-rds-endpoint
+
 
   RDSPort:
-    Description: RDS MySQL port
-    Value:
-      !GetAtt RDSInstance.Endpoint.Port
+    Description: RDS database port
+    Value: !GetAtt RDSInstance.Endpoint.Port
 
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-rds-port
+      Name: !Sub cloudmart-${Environment}-rds-port
+
 
   ArtifactsBucketName:
-    Description: Existing Lambda deployment artifacts bucket
-    Value:
-      !Ref ArtifactsBucketName
+    Description: Existing S3 bucket containing Lambda deployment artifacts
+    Value: !Ref ArtifactsBucketName
 
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-artifacts-bucket-name
+      Name: !Sub cloudmart-${Environment}-artifacts-bucket-name
+
 
   ReportsBucketName:
-    Description: CloudMart reports S3 bucket
-    Value:
-      !Ref ReportsBucket
+    Description: S3 bucket containing generated CloudMart reports
+    Value: !Ref ReportsBucket
 
     Export:
-      Name:
-        !Sub cloudmart-${Environment}-reports-bucket-name
+      Name: !Sub cloudmart-${Environment}-reports-bucket-name
