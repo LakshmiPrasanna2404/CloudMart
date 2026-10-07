@@ -55,6 +55,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate deployment environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$ENVIRONMENT" != "dev" && "$ENVIRONMENT" != "prod" ]]; then
+            echo "ENVIRONMENT GitHub Actions variable must be set to dev or prod."
+            echo "Current value: '$ENVIRONMENT'"
+            exit 1
+          fi
+          echo "Deploying environment: $ENVIRONMENT"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -70,7 +81,6 @@ jobs:
             --stack-name cloudmart-network \
             --parameter-overrides \
               Environment="$ENVIRONMENT" \
-              DashboardAccessCidr=0.0.0.0/0 \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -137,11 +147,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ARTIFACTS_BUCKET="cloudmart-artifacts-${ACCOUNT_ID}"
+
+          echo "Using artifact bucket: $ARTIFACTS_BUCKET"
+          aws s3api head-bucket --bucket "$ARTIFACTS_BUCKET"
+
           aws cloudformation deploy \
             --template-file cloudformation/data-stack.yaml \
             --stack-name cloudmart-data \
             --parameter-overrides \
               Environment="$ENVIRONMENT" \
+              ArtifactsBucketName="$ARTIFACTS_BUCKET" \
               DBMasterUsername="${{ steps.dbcreds.outputs.username }}" \
               DBMasterUserPassword="${{ steps.dbcreds.outputs.password }}" \
             --role-arn "$DEPLOY_ROLE" \
@@ -427,7 +444,7 @@ jobs:
             --parameter-overrides \
               Environment="$ENVIRONMENT" \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
-              DBInstanceIdentifier=cloudmart-${ENVIRONMENT}-db \
+              DBInstanceIdentifier="cloudmart-${ENVIRONMENT}-db" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -706,7 +723,6 @@ jobs:
           set -euo pipefail
 
           REGION="__AWS_REGION__"
-          ENVIRONMENT="__ENVIRONMENT__"
           ARTIFACTS_BUCKET="__ARTIFACTS_BUCKET__"
           REPORTS_BUCKET="__REPORTS_BUCKET__"
           DB_HOST="__DB_HOST__"
@@ -802,7 +818,6 @@ jobs:
 
           sed -i \
             -e "s|__AWS_REGION__|${AWS_REGION}|g" \
-            -e "s|__ENVIRONMENT__|${ENVIRONMENT}|g" \
             -e "s|__ARTIFACTS_BUCKET__|${{ steps.values.outputs.artifacts_bucket }}|g" \
             -e "s|__REPORTS_BUCKET__|${{ steps.values.outputs.reports_bucket }}|g" \
             -e "s|__DB_HOST__|${{ steps.values.outputs.db_host }}|g" \
