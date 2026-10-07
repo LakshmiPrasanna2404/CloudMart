@@ -18,7 +18,7 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   DEPLOY_ROLE: ${{ vars.AWS_ROLE_ARN }}
-  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+  ENVIRONMENT: prod
   DASHBOARD_ACCESS_CIDR: ${{ vars.DASHBOARD_ACCESS_CIDR }}
 
 jobs:
