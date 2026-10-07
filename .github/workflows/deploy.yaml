@@ -863,7 +863,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
             --comment "Deploy CloudMart Flask dashboard" \
-            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo ENVIRONMENT=$ENVIRONMENT bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
+            --parameters "commands=[\"echo $SCRIPT_B64 | base64 -d > /tmp/deploy-dashboard-on-ec2.sh\", \"chmod +x /tmp/deploy-dashboard-on-ec2.sh\", \"sudo ENVIRONMENT=\\\"$ENVIRONMENT\\\" bash /tmp/deploy-dashboard-on-ec2.sh\"]" \
             --region "$AWS_REGION" \
             --query "Command.CommandId" \
             --output text)
