@@ -18,6 +18,7 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   DEPLOY_ROLE: ${{ vars.AWS_ROLE_ARN }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
 
 jobs:
   # ============================================================
@@ -68,7 +69,7 @@ jobs:
             --template-file cloudformation/network-stack.yaml \
             --stack-name cloudmart-network \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               DashboardAccessCidr=0.0.0.0/0 \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -101,13 +102,13 @@ jobs:
           set -euo pipefail
 
           USERNAME=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/db/username" \
+            --name "/cloudmart/${ENVIRONMENT}/db/username" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
 
           PASSWORD=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/db/password" \
+            --name "/cloudmart/${ENVIRONMENT}/db/password" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
@@ -123,14 +124,14 @@ jobs:
           set -euo pipefail
 
           aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/admin-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
             >/dev/null
-          echo "Verified: /cloudmart/prod/auth/admin-token"
+          echo "Verified: /cloudmart/${ENVIRONMENT}/auth/admin-token"
 
           aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/products-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/products-token" \
             >/dev/null
-          echo "Verified: /cloudmart/prod/auth/products-token"
+          echo "Verified: /cloudmart/${ENVIRONMENT}/auth/products-token"
 
       - name: Deploy data-stack
         run: |
@@ -140,7 +141,7 @@ jobs:
             --template-file cloudformation/data-stack.yaml \
             --stack-name cloudmart-data \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               DBMasterUsername="${{ steps.dbcreds.outputs.username }}" \
               DBMasterUserPassword="${{ steps.dbcreds.outputs.password }}" \
             --role-arn "$DEPLOY_ROLE" \
@@ -185,7 +186,7 @@ jobs:
             --template-file cloudformation/iam-stack.yaml \
             --stack-name cloudmart-iam \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               ReportsBucketName="$REPORTS_BUCKET" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -259,7 +260,7 @@ jobs:
             --template-file cloudformation/app-stack.yaml \
             --stack-name cloudmart-app \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -271,16 +272,16 @@ jobs:
           set -euo pipefail
 
           for fn in authorizer product order apply-schema; do
-            echo "Updating Lambda code: cloudmart-prod-$fn"
+            echo "Updating Lambda code: cloudmart-${ENVIRONMENT}-$fn"
 
             aws lambda update-function-code \
-              --function-name "cloudmart-prod-$fn" \
+              --function-name "cloudmart-${ENVIRONMENT}-$fn" \
               --s3-bucket "$ARTIFACTS_BUCKET" \
               --s3-key "lambdas/$fn.zip" \
               --publish
 
             aws lambda wait function-updated \
-              --function-name "cloudmart-prod-$fn"
+              --function-name "cloudmart-${ENVIRONMENT}-$fn"
           done
 
   # ============================================================
@@ -391,12 +392,12 @@ jobs:
             --template-file cloudformation/report-stack.yaml \
             --stack-name cloudmart-report \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               ReportLambdaRoleArn="${{ steps.outputs.outputs.report_role_arn }}" \
               DBHost="${{ steps.outputs.outputs.db_host }}" \
               ReportsBucketName="${{ steps.outputs.outputs.reports_bucket }}" \
-              DBUsernameParameter="/cloudmart/prod/db/username" \
-              DBPasswordParameter="/cloudmart/prod/db/password" \
+              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
+              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
               ArtifactBucketName="${{ steps.outputs.outputs.artifacts_bucket }}" \
               ArtifactKey="lambdas/report-generate.zip" \
             --role-arn "$DEPLOY_ROLE" \
@@ -408,13 +409,13 @@ jobs:
           set -euo pipefail
 
           aws lambda update-function-code \
-            --function-name cloudmart-prod-report-generate \
+            --function-name cloudmart-${ENVIRONMENT}-report-generate \
             --s3-bucket "${{ steps.outputs.outputs.artifacts_bucket }}" \
             --s3-key "lambdas/report-generate.zip" \
             --publish
 
           aws lambda wait function-updated \
-            --function-name cloudmart-prod-report-generate
+            --function-name cloudmart-${ENVIRONMENT}-report-generate
 
       - name: Deploy monitoring-stack
         run: |
@@ -424,9 +425,9 @@ jobs:
             --template-file cloudformation/monitoring-stack.yaml \
             --stack-name cloudmart-monitoring \
             --parameter-overrides \
-              Environment=prod \
+              Environment="$ENVIRONMENT" \
               AlertEmail="${{ vars.ALERT_EMAIL }}" \
-              DBInstanceIdentifier=cloudmart-prod-db \
+              DBInstanceIdentifier=cloudmart-${ENVIRONMENT}-db \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -434,7 +435,7 @@ jobs:
       - name: Verify report Lambda
         run: |
           aws lambda get-function \
-            --function-name cloudmart-prod-report-generate \
+            --function-name cloudmart-${ENVIRONMENT}-report-generate \
             --query "Configuration.[FunctionName,State,Runtime]" \
             --output table
 
@@ -466,7 +467,7 @@ jobs:
           set -euo pipefail
 
           aws lambda invoke \
-            --function-name cloudmart-prod-apply-schema \
+            --function-name cloudmart-${ENVIRONMENT}-apply-schema \
             --payload '{}' \
             response.json
 
@@ -519,14 +520,14 @@ jobs:
           set -euo pipefail
 
           aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/admin-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
             >/dev/null
-          echo "Found: /cloudmart/prod/auth/admin-token"
+          echo "Found: /cloudmart/${ENVIRONMENT}/auth/admin-token"
 
           aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/products-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/products-token" \
             >/dev/null
-          echo "Found: /cloudmart/prod/auth/products-token"
+          echo "Found: /cloudmart/${ENVIRONMENT}/auth/products-token"
 
           echo "RBAC SSM parameter verification complete"
 
@@ -560,7 +561,7 @@ jobs:
           set -euo pipefail
 
           TOKEN=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/admin-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
@@ -594,7 +595,7 @@ jobs:
           set -euo pipefail
 
           TOKEN=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/auth/products-token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/products-token" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
@@ -705,6 +706,7 @@ jobs:
           set -euo pipefail
 
           REGION="__AWS_REGION__"
+          ENVIRONMENT="__ENVIRONMENT__"
           ARTIFACTS_BUCKET="__ARTIFACTS_BUCKET__"
           REPORTS_BUCKET="__REPORTS_BUCKET__"
           DB_HOST="__DB_HOST__"
@@ -734,14 +736,14 @@ jobs:
           test -d "$APP_DIR/vendor"
 
           DB_USER=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/db/username" \
+            --name "/cloudmart/${ENVIRONMENT}/db/username" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text \
             --region "$REGION")
 
           DB_PASSWORD=$(aws ssm get-parameter \
-            --name "/cloudmart/prod/db/password" \
+            --name "/cloudmart/${ENVIRONMENT}/db/password" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text \
@@ -800,6 +802,7 @@ jobs:
 
           sed -i \
             -e "s|__AWS_REGION__|${AWS_REGION}|g" \
+            -e "s|__ENVIRONMENT__|${ENVIRONMENT}|g" \
             -e "s|__ARTIFACTS_BUCKET__|${{ steps.values.outputs.artifacts_bucket }}|g" \
             -e "s|__REPORTS_BUCKET__|${{ steps.values.outputs.reports_bucket }}|g" \
             -e "s|__DB_HOST__|${{ steps.values.outputs.db_host }}|g" \
