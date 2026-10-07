@@ -206,6 +206,7 @@ jobs:
             --parameter-overrides \
               Environment="$ENVIRONMENT" \
               ReportsBucketName="$REPORTS_BUCKET" \
+              FromEmail="${{ vars.ALERT_EMAIL }}" \
             --role-arn "$DEPLOY_ROLE" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
