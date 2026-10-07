@@ -10,12 +10,18 @@ Parameters:
 
   Environment:
     Type: String
-    Default: prod
-    AllowedValues: [dev, prod]
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment supplied by the deployment workflow
 
   ReportsBucketName:
     Type: String
     Description: Existing CloudMart S3 bucket used for generated reports
+
+  FromEmail:
+    Type: String
+    Description: Verified SES sender email address supplied by the deployment workflow
 
 
 Resources:
@@ -329,7 +335,7 @@ Resources:
 
                 Condition:
                   StringEquals:
-                    ses:FromAddress: lakshmiprasanna2414@gmail.com
+                    ses:FromAddress: !Ref FromEmail
 
 
               - Sid: OwnLogGroupOnly
